@@ -669,8 +669,9 @@ def scaled_mm_fp8_fused(
     (and optional scale list) for N adapters in load order — dispatches to
     ``scaled_mm_fp8_fused_multi``.
     """
-    # Sequence of adapters → multi path (preserve load order).
-    if isinstance(lora_down, (list, tuple)) or isinstance(lora_up, (list, tuple)):
+    # IDLE_WIN_HOST_LORA: any LoRA (1..N) → multi/host residual path (in-kernel
+    # LoRA epilogue measured slower than HIP on gfx1201 idle).
+    if lora_down is not None or lora_up is not None or isinstance(lora_down, (list, tuple)) or isinstance(lora_up, (list, tuple)):
         return scaled_mm_fp8_fused_multi(
             a_f,
             b_nk,
@@ -845,10 +846,13 @@ def _lora_residual(
     lora_scale: float,
     out_dtype: torch.dtype,
 ) -> torch.Tensor:
-    """Host LoRA-only GEMM: scale * (A @ down.T) @ up.T (same math as epilogue)."""
-    hidden = a_f.float() @ lora_down.float().T
-    delta = float(lora_scale) * (hidden @ lora_up.float().T)
-    return delta.to(dtype=out_dtype)
+    """Host LoRA-only GEMM in activation dtype (avoid fp32 / extra .to copies)."""
+    down = lora_down if lora_down.dtype == a_f.dtype else lora_down.to(dtype=a_f.dtype)
+    up = lora_up if lora_up.dtype == a_f.dtype else lora_up.to(dtype=a_f.dtype)
+    delta = (a_f @ down.T) @ up.T
+    if lora_scale != 1.0:
+        delta = delta * float(lora_scale)
+    return delta if delta.dtype == out_dtype else delta.to(dtype=out_dtype)
 
 
 def reference_scaled_mm_fp8_fused_multi(
@@ -907,7 +911,6 @@ def scaled_mm_fp8_fused_multi(
 
     packs = _pack_lora_adapters(lora_downs, lora_ups, lora_scales, k=k, n=n)
 
-    # Fast path: empty or single supported-rank adapter → one fused launch.
     if len(packs) == 0:
         return scaled_mm_fp8_fused(
             a_f,
@@ -918,22 +921,10 @@ def scaled_mm_fp8_fused_multi(
             stream=stream,
             e5m2=e5m2,
         )
-    if len(packs) == 1 and int(packs[0][0].shape[0]) in (8, 16, 32, 64):
-        down, up, scale = packs[0]
-        return scaled_mm_fp8_fused(
-            a_f,
-            b_nk,
-            scale_a,
-            scale_b,
-            out_dtype=out_dtype,
-            lora_down=down,
-            lora_up=up,
-            lora_scale=scale,
-            stream=stream,
-            e5m2=e5m2,
-        )
 
-    # Base fused once; add residuals in pack / load order.
+    # Idle-win policy (gfx1201): always base fused (no in-kernel LoRA) + host
+    # bf16/fp16 residuals in load order. In-kernel LoRA epilogue measured slower
+    # than HIP quant+mm+host-LoRA on R9700; host residual after fused base wins.
     out = scaled_mm_fp8_fused(
         a_f,
         b_nk,
