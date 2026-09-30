@@ -57,3 +57,18 @@ other listed operations are also WIN.
 The one actual earlier removal is `int8_linear_fused` (+LoRA/multi), which is
 not re-added by this policy. That historical removal is distinct from the
 inform-only loser list above.
+
+
+## W8A16 Path A / int8_rowwise / AB gate (landed 2026-09-30)
+
+Additive tip surface (no Comfy hooks). Cite WORKER_REFERENCE.md / playbook §11.
+
+| Kernel | Path | Notes |
+|---|---|---|
+| `kernels/gemm/rdna4_w8a16_path_a.py` | A (ops-suite + iu8 tip) | bf16 WMMA; no iu8 atom; large LOSE → gate |
+| `kernels/quant/rdna4_quantize_int8_rowwise.py` | A + B | rcp scale match; idle WIN class historically |
+| `kernels/gemm/rdna4_int8_ab_gate.py` | host | M-floor then M×K; Path B needs tip B iu8 |
+
+**READY_FOR_SMOKE:** GPU worker owns idle one-smokes — see Desktop
+`04_lab/results/READY_FOR_SMOKE_W8A16_PATH_A_ROWWISE_AB_2026-09-30.md` (or
+`/tmp/flydsl_gap1_built/READY_FOR_SMOKE_…`). Do not invent ×; measure idle only.

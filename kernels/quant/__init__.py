@@ -10,4 +10,7 @@ Also ``rdna4_int8_convrot``: kitchen-compatible ``quantize_int8_convrot_weight``
 ``quantize_and_rotate_rowwise`` (Hadamard G∈{16,64,256} + rowwise INT8). Host
 ``int8_linear_convrot`` needs the PR-B iu8 GEMM (skipped in suite-only tests).
 ``convrot_w4a4`` remains a separate packed format (follow-up).
+
+Also ``rdna4_quantize_int8_rowwise``: kitchen-compatible rowwise absmax INT8
+quant (rcp scale; no iu8 atom).
 """
