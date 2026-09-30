@@ -50,13 +50,6 @@ _SUPPORTED_LORA_RANKS = (0, 8, 16, 32, 64)
 _FP8_TORCH = (torch.float8_e4m3fn, torch.float8_e5m2)
 
 
-def _wgp_count() -> int:
-    try:
-        return int(torch.cuda.get_device_properties(0).multi_processor_count) or 32
-    except Exception:  # noqa: BLE001
-        return 32
-
-
 @lru_cache(maxsize=128)
 def build_scaled_mm_fp8_fused_module(
     out_name: str,
@@ -644,6 +637,23 @@ def reference_scaled_mm_fp8_fused(
     return out.to(out_dtype)
 
 
+
+def _scale1(s: torch.Tensor, device: torch.device) -> torch.Tensor:
+    """Flat 1xf32 scale; skip .to/reshape/contiguous when already hot-path ready.
+
+    Docs: playbook lean host (flat scales / skip redundant contiguous); same
+    pattern as comfy/flydsl_quant._scale_operand and flydsl_scaled_mm._scale1.
+    """
+    if (
+        s.dtype == torch.float32
+        and s.device == device
+        and s.is_contiguous()
+        and s.numel() == 1
+    ):
+        return s
+    return s.detach().to(device=device, dtype=torch.float32).reshape(1).contiguous()
+
+
 def scaled_mm_fp8_fused(
     a_f: torch.Tensor,
     b_nk: torch.Tensor,
@@ -736,8 +746,8 @@ def scaled_mm_fp8_fused(
         out_name, in_name, cfg, skip_bounds, lora_rank, e5m2
     )
     out = torch.empty((m, n), dtype=out_dtype, device=a_f.device)
-    scale_a = scale_a.to(device=a_f.device, dtype=torch.float32).reshape(1).contiguous()
-    scale_b = scale_b.to(device=a_f.device, dtype=torch.float32).reshape(1).contiguous()
+    scale_a = _scale1(scale_a, a_f.device)
+    scale_b = _scale1(scale_b, a_f.device)
 
     if lora_rank == 0:
         # Dummy 1-element buffers so the launcher signature stays fixed.
@@ -748,9 +758,7 @@ def scaled_mm_fp8_fused(
         lora_down_buf = lora_down.contiguous()
         lora_up_buf = lora_up.contiguous()
         if isinstance(lora_scale, torch.Tensor):
-            lora_scale_buf = lora_scale.to(
-                device=a_f.device, dtype=torch.float32
-            ).reshape(1).contiguous()
+            lora_scale_buf = _scale1(lora_scale, a_f.device)
         else:
             lora_scale_buf = torch.tensor(
                 [float(lora_scale)], device=a_f.device, dtype=torch.float32

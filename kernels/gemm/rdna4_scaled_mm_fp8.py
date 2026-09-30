@@ -56,14 +56,26 @@ _CFG_64_64_64 = TileConfig(64, 64, 64, 2, 2, 2, 2)
 _CFG_64_64_128 = TileConfig(64, 64, 128, 2, 2, 2, 2)
 
 
+_WGP_COUNT_CACHE: int | None = None
+
+
 def _wgp_count() -> int:
+    """Cached CU/WGP count — pick_tile is on the hot idle path (lean host).
+
+    Docs: playbook lean host / HIP performance guidelines (avoid repeated host
+    queries on short launches); mirrors kernels/gemm/rdna4_int8_linear.py.
+    """
+    global _WGP_COUNT_CACHE
+    if _WGP_COUNT_CACHE is not None:
+        return _WGP_COUNT_CACHE
     try:
-        return (
+        _WGP_COUNT_CACHE = (
             int(torch.cuda.get_device_properties(0).multi_processor_count)
             or _DEFAULT_WGPS
         )
     except Exception:  # noqa: BLE001
-        return _DEFAULT_WGPS
+        _WGP_COUNT_CACHE = _DEFAULT_WGPS
+    return _WGP_COUNT_CACHE
 
 
 def pick_tile_config(M: int, N: int, K: int, wgps: int | None = None) -> TileConfig:
