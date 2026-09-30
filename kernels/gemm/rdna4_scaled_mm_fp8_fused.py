@@ -9,23 +9,30 @@ tensorwise ``scale_a * scale_b`` in the epilogue. Avoids a separate
 ``fp8_quant`` launch before ``scaled_mm``. Format parity with
 ``rdna4_fp8_quant`` / ``rdna4_stoch_fp8`` (max 448 vs 57344).
 
-Optional single-adapter LoRA residual (Linear / keep math):
+Optional LoRA residual (Linear / keep math), single or multi:
 
     out += lora_scale * (A_f @ lora_down.T) @ lora_up.T
 
 where ``lora_down`` is ``[R, K]``, ``lora_up`` is ``[N, R]``, and
-``lora_scale`` already folds ``(alpha / rank) * multiplier``. Rank is a
-compile-time specialization (8/16/32/64). Multi-adapter stacks call the same
-epilogue from the host (or remain on the Python ``h(x)`` path).
+``lora_scale`` already folds ``(alpha / rank) * multiplier``. The single-adapter
+fused kernel specializes ranks ``{8,16,32,64}`` as a building block.
+
+**Multi-adapter (any N, load order):** ``scaled_mm_fp8_fused_multi`` (also via
+list ``lora_down``/``lora_up`` on ``scaled_mm_fp8_fused``) runs base fused
+quant⊕mm once (``lora=None``), then adds each residual in pack order. N=1 with
+a supported rank stays one fused launch; N=0 is plain fused; N≥2 (or unsupported
+rank) uses base + host LoRA-only GEMMs. Correctness = sequential sum in load
+order (same as Comfy ``sum h_i(x)``).
 
 Does **not** require the gfx120x iu8 atom (FP8 WMMA only). Measured intent:
 remove act-quant launch overhead on diffusion / LLM Linear shapes with packed
 FP8 weights (Comfy quant-keep / LoRA-keep consumers).
 
-Public builders: ``build_scaled_mm_fp8_fused_module``, host helper
-``scaled_mm_fp8_fused``. Tile pick reuses ``rdna4_scaled_mm_fp8.pick_tile_config``.
+Public: ``build_scaled_mm_fp8_fused_module``, ``scaled_mm_fp8_fused``,
+``scaled_mm_fp8_fused_multi``. Tile pick reuses ``rdna4_scaled_mm_fp8.pick_tile_config``.
 """
 
+from collections.abc import Sequence
 from functools import lru_cache
 
 import torch
@@ -644,13 +651,13 @@ def scaled_mm_fp8_fused(
     scale_b: torch.Tensor,
     *,
     out_dtype: torch.dtype = torch.bfloat16,
-    lora_down: torch.Tensor | None = None,
-    lora_up: torch.Tensor | None = None,
-    lora_scale: float | torch.Tensor = 1.0,
+    lora_down: torch.Tensor | Sequence[torch.Tensor] | None = None,
+    lora_up: torch.Tensor | Sequence[torch.Tensor] | None = None,
+    lora_scale: float | torch.Tensor | Sequence[float | torch.Tensor] = 1.0,
     stream=None,
     e5m2: bool | None = None,
 ) -> torch.Tensor:
-    """Host wrapper: fused act-quant ⊕ FP8 scaled_mm with optional single LoRA.
+    """Host wrapper: fused act-quant ⊕ FP8 scaled_mm with optional LoRA.
 
     ``a_f`` is bf16/fp16/fp32 ``[M, K]``; ``b_nk`` is ``float8_e4m3fn`` or
     ``float8_e5m2`` ``[N, K]``. Format is inferred from ``b_nk.dtype`` unless
@@ -658,9 +665,25 @@ def scaled_mm_fp8_fused(
     when e5m2, else fp8 cvt + max 448.
 
     LoRA tensors (when provided) match Comfy Linear keep: down ``[R, K]``,
-    up ``[N, R]``, same dtype as activations. Multi-adapter: host-loop this
-    helper (or keep Python ``h(x)`` for remaining adapters).
+    up ``[N, R]``, same dtype as activations. Pass a **list/tuple** of downs/ups
+    (and optional scale list) for N adapters in load order — dispatches to
+    ``scaled_mm_fp8_fused_multi``.
     """
+    # Sequence of adapters → multi path (preserve load order).
+    if isinstance(lora_down, (list, tuple)) or isinstance(lora_up, (list, tuple)):
+        return scaled_mm_fp8_fused_multi(
+            a_f,
+            b_nk,
+            scale_a,
+            scale_b,
+            out_dtype=out_dtype,
+            lora_downs=lora_down,
+            lora_ups=lora_up,
+            lora_scales=lora_scale,
+            stream=stream,
+            e5m2=e5m2,
+        )
+
     import flydsl.compiler as flyc
     import flydsl.expr as fx
     from kernels.common.tensor_shim import _run_compiled
@@ -752,4 +775,174 @@ def scaled_mm_fp8_fused(
         k,
         stream,
     )
+    return out
+
+def _lora_scale_as_float(scale: float | torch.Tensor) -> float:
+    if isinstance(scale, torch.Tensor):
+        return float(scale.detach().float().reshape(-1)[0].item())
+    return float(scale)
+
+
+def _pack_lora_adapters(
+    lora_downs: torch.Tensor | Sequence[torch.Tensor] | None,
+    lora_ups: torch.Tensor | Sequence[torch.Tensor] | None,
+    lora_scales: float | torch.Tensor | Sequence[float | torch.Tensor] | None,
+    *,
+    k: int,
+    n: int,
+) -> list[tuple[torch.Tensor, torch.Tensor, float]]:
+    """Normalize single/list LoRA args into ordered (down, up, scale) packs."""
+    if lora_downs is None and lora_ups is None:
+        if lora_scales is None:
+            return []
+        raise ValueError("lora_scales set without lora_downs/lora_ups")
+    if lora_downs is None or lora_ups is None:
+        raise ValueError("lora_downs and lora_ups must both be set or both None")
+
+    if isinstance(lora_downs, torch.Tensor):
+        downs: list[torch.Tensor] = [lora_downs]
+    else:
+        downs = list(lora_downs)
+    if isinstance(lora_ups, torch.Tensor):
+        ups: list[torch.Tensor] = [lora_ups]
+    else:
+        ups = list(lora_ups)
+    if len(downs) != len(ups):
+        raise ValueError(
+            f"lora_downs/lora_ups length mismatch: {len(downs)} vs {len(ups)}"
+        )
+
+    if lora_scales is None:
+        scales_list: list[float | torch.Tensor] = [1.0] * len(downs)
+    elif isinstance(lora_scales, (list, tuple)):
+        scales_list = list(lora_scales)
+    else:
+        scales_list = [lora_scales] * len(downs)
+    if len(scales_list) != len(downs):
+        raise ValueError(
+            f"lora_scales length {len(scales_list)} != adapters {len(downs)}"
+        )
+
+    packs: list[tuple[torch.Tensor, torch.Tensor, float]] = []
+    for i, (down, up, scale) in enumerate(zip(downs, ups, scales_list)):
+        if not isinstance(down, torch.Tensor) or not isinstance(up, torch.Tensor):
+            raise TypeError(f"adapter[{i}] down/up must be tensors")
+        if down.dim() != 2 or up.dim() != 2:
+            raise ValueError(f"adapter[{i}] down/up must be 2D")
+        rank = int(down.shape[0])
+        if tuple(down.shape) != (rank, k):
+            raise ValueError(f"adapter[{i}] lora_down must be [{rank}, {k}]")
+        if tuple(up.shape) != (n, rank):
+            raise ValueError(f"adapter[{i}] lora_up must be [{n}, {rank}]")
+        packs.append((down, up, _lora_scale_as_float(scale)))
+    return packs
+
+
+def _lora_residual(
+    a_f: torch.Tensor,
+    lora_down: torch.Tensor,
+    lora_up: torch.Tensor,
+    lora_scale: float,
+    out_dtype: torch.dtype,
+) -> torch.Tensor:
+    """Host LoRA-only GEMM: scale * (A @ down.T) @ up.T (same math as epilogue)."""
+    hidden = a_f.float() @ lora_down.float().T
+    delta = float(lora_scale) * (hidden @ lora_up.float().T)
+    return delta.to(dtype=out_dtype)
+
+
+def reference_scaled_mm_fp8_fused_multi(
+    a_f: torch.Tensor,
+    b_nk: torch.Tensor,
+    scale_a: torch.Tensor,
+    scale_b: torch.Tensor,
+    out_dtype: torch.dtype = torch.bfloat16,
+    lora_downs: torch.Tensor | Sequence[torch.Tensor] | None = None,
+    lora_ups: torch.Tensor | Sequence[torch.Tensor] | None = None,
+    lora_scales: float | torch.Tensor | Sequence[float | torch.Tensor] | None = 1.0,
+) -> torch.Tensor:
+    """Torch reference: base quant+mm + sequential LoRA residuals in load order."""
+    m, k = a_f.shape
+    n = b_nk.shape[0]
+    packs = _pack_lora_adapters(lora_downs, lora_ups, lora_scales, k=k, n=n)
+    out = reference_scaled_mm_fp8_fused(
+        a_f, b_nk, scale_a, scale_b, out_dtype=out_dtype
+    )
+    for down, up, scale in packs:
+        out = out + _lora_residual(a_f, down, up, scale, out_dtype)
+    return out
+
+
+def scaled_mm_fp8_fused_multi(
+    a_f: torch.Tensor,
+    b_nk: torch.Tensor,
+    scale_a: torch.Tensor,
+    scale_b: torch.Tensor,
+    *,
+    out_dtype: torch.dtype = torch.bfloat16,
+    lora_downs: torch.Tensor | Sequence[torch.Tensor] | None = None,
+    lora_ups: torch.Tensor | Sequence[torch.Tensor] | None = None,
+    lora_scales: float | torch.Tensor | Sequence[float | torch.Tensor] | None = 1.0,
+    stream=None,
+    e5m2: bool | None = None,
+) -> torch.Tensor:
+    """N-adapter fused path: base quant⊕mm once, residuals in load order.
+
+    Building block remains the single-adapter fused kernel (ranks 8/16/32/64).
+
+    * **N=0**: ``scaled_mm_fp8_fused(..., lora=None)``
+    * **N=1** with supported rank: one fused launch with in-kernel LoRA epilogue
+    * **N≥2** or unsupported rank: base fused (no LoRA) + host LoRA-only GEMMs
+      added sequentially (same math as Comfy ``sum_i h_i(x)``)
+
+    Args accept a single tensor or a sequence of tensors for downs/ups; scales
+    may be a scalar (broadcast) or a per-adapter sequence.
+    """
+    if a_f.dim() != 2 or b_nk.dim() != 2:
+        raise ValueError("scaled_mm_fp8_fused_multi expects 2D operands")
+    m, k = a_f.shape
+    n = b_nk.shape[0]
+    if b_nk.shape[1] != k:
+        raise ValueError(f"K mismatch: a_f {k} vs b_nk {b_nk.shape[1]}")
+
+    packs = _pack_lora_adapters(lora_downs, lora_ups, lora_scales, k=k, n=n)
+
+    # Fast path: empty or single supported-rank adapter → one fused launch.
+    if len(packs) == 0:
+        return scaled_mm_fp8_fused(
+            a_f,
+            b_nk,
+            scale_a,
+            scale_b,
+            out_dtype=out_dtype,
+            stream=stream,
+            e5m2=e5m2,
+        )
+    if len(packs) == 1 and int(packs[0][0].shape[0]) in (8, 16, 32, 64):
+        down, up, scale = packs[0]
+        return scaled_mm_fp8_fused(
+            a_f,
+            b_nk,
+            scale_a,
+            scale_b,
+            out_dtype=out_dtype,
+            lora_down=down,
+            lora_up=up,
+            lora_scale=scale,
+            stream=stream,
+            e5m2=e5m2,
+        )
+
+    # Base fused once; add residuals in pack / load order.
+    out = scaled_mm_fp8_fused(
+        a_f,
+        b_nk,
+        scale_a,
+        scale_b,
+        out_dtype=out_dtype,
+        stream=stream,
+        e5m2=e5m2,
+    )
+    for down, up, scale in packs:
+        out = out + _lora_residual(a_f, down, up, scale, out_dtype)
     return out

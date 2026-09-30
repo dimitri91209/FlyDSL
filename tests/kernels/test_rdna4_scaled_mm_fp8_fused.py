@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 FlyDSL Project Contributors
 
-"""Correctness tests for fused act-quant ⊕ FP8 e4m3/e5m2 scaled_mm (+ LoRA)."""
+"""Correctness tests for fused act-quant ⊕ FP8 e4m3/e5m2 scaled_mm (+ LoRA multi)."""
 
 import os
 import sys
@@ -19,7 +19,9 @@ if _REPO_ROOT not in sys.path:
 from flydsl.runtime.device import get_rocm_arch  # noqa: E402
 from kernels.gemm.rdna4_scaled_mm_fp8_fused import (  # noqa: E402
     reference_scaled_mm_fp8_fused,
+    reference_scaled_mm_fp8_fused_multi,
     scaled_mm_fp8_fused,
+    scaled_mm_fp8_fused_multi,
 )
 
 if not torch.cuda.is_available():
@@ -186,3 +188,80 @@ def test_reference_helper_cpu_math():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+@pytest.mark.parametrize("n_adapters", [0, 1, 2, 3])
+def test_fused_scaled_mm_lora_multi(n_adapters):
+    """N adapters in load order match sequential reference sum (N=0..3)."""
+    torch.manual_seed(31 + n_adapters)
+    m = n = k = 64
+    a_f = torch.randn((m, k), device="cuda", dtype=torch.bfloat16).clamp(-1, 1)
+    b_nk = (
+        torch.randn((n, k), device="cuda", dtype=torch.float32)
+        .clamp(-1, 1)
+        .to(torch.float8_e4m3fn)
+        .contiguous()
+    )
+    scale_a = torch.tensor([0.8], device="cuda", dtype=torch.float32)
+    scale_b = torch.tensor([1.1], device="cuda", dtype=torch.float32)
+
+    ranks = [8, 16, 8][:n_adapters]
+    downs, ups, scales = [], [], []
+    for i, rank in enumerate(ranks):
+        downs.append(
+            torch.randn((rank, k), device="cuda", dtype=torch.bfloat16) * (0.02 + 0.01 * i)
+        )
+        ups.append(
+            torch.randn((n, rank), device="cuda", dtype=torch.bfloat16) * (0.02 + 0.01 * i)
+        )
+        scales.append(0.4 + 0.1 * i)
+
+    out = scaled_mm_fp8_fused_multi(
+        a_f,
+        b_nk,
+        scale_a,
+        scale_b,
+        out_dtype=torch.bfloat16,
+        lora_downs=downs if downs else None,
+        lora_ups=ups if ups else None,
+        lora_scales=scales if scales else None,
+    )
+    torch.cuda.synchronize()
+    ref = reference_scaled_mm_fp8_fused_multi(
+        a_f,
+        b_nk,
+        scale_a,
+        scale_b,
+        out_dtype=torch.bfloat16,
+        lora_downs=downs if downs else None,
+        lora_ups=ups if ups else None,
+        lora_scales=scales if scales else None,
+    )
+    torch.testing.assert_close(out.float(), ref.float(), rtol=0.05, atol=0.25)
+
+    # List dispatch through scaled_mm_fp8_fused must match multi.
+    if n_adapters >= 1:
+        out2 = scaled_mm_fp8_fused(
+            a_f,
+            b_nk,
+            scale_a,
+            scale_b,
+            out_dtype=torch.bfloat16,
+            lora_down=downs,
+            lora_up=ups,
+            lora_scale=scales,
+        )
+        torch.cuda.synchronize()
+        torch.testing.assert_close(out2.float(), ref.float(), rtol=0.05, atol=0.25)
+
+    # Explicit sequential sum vs multi (order sensitivity check for N>=2).
+    if n_adapters >= 2:
+        base = reference_scaled_mm_fp8_fused(
+            a_f, b_nk, scale_a, scale_b, out_dtype=torch.bfloat16
+        )
+        seq = base.float()
+        for down, up, sc in zip(downs, ups, scales):
+            hid = a_f.float() @ down.float().T
+            seq = seq + float(sc) * (hid @ up.float().T)
+        torch.testing.assert_close(out.float(), seq, rtol=0.05, atol=0.25)
+
