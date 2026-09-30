@@ -6,6 +6,23 @@
 `PARITY_CONFIRM_2026-09-30.json`, and `CONVROT_LEAN_2026-09-30.json`  
 **Credit:** dimitri91209 + Grokbot
 
+## Idle smoke methodology (one at a time)
+
+Lab and tip refresh benches must use **one single smoke per process**:
+
+1. Pick exactly one `(kernel, shape)`.
+2. Confirm GPU idle (Comfy stopped; busy ≈ 0).
+3. **Warm** ≥10 untimed launches of that path; `torch.cuda.synchronize()`.
+4. Time **HIP only** (CUDA/HIP events, median ≥25–40 reps); sync.
+5. Time **FlyDSL only** the same way; sync.
+6. Write the row (HIP µs, Fly µs, ×, verdict); **exit**.
+7. Next shape = **new process** — never loop shapes inside one invocation.
+
+Do not batch shapes or tests per shape in one smoke run (I/O lag / cross-shape
+noise corrupts idle comparisons). Prefer event timers over wall clock. Log only
+after both backends for that shape are measured. Dual-launch sub-100 µs paths
+may also report backlog-event (see FlyDSL `docs/autotune_guide.md`).
+
 ## Multi-LoRA methodology
 
 There is no separate bf16/fp16 multi-LoRA GEMM kernel. The quantized base GEMM
