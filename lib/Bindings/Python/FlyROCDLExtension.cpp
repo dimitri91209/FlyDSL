@@ -153,8 +153,12 @@ struct PyMmaOpGFX120X_WMMAType : PyConcreteType<PyMmaOpGFX120X_WMMAType> {
         "sign_a"_a = false, "sign_b"_a = false, "clamp"_a = false, "context"_a = nb::none(),
         "Create a MmaOpGFX120X_WMMAType with m, n, k dimensions and element types "
         "(RDNA4 gfx1200 / gfx1201 wave32 WMMA, 16x16x16 with the v8 operand ABI). "
-        "sign_a/sign_b/clamp must be false: fp16, bf16, and every fp8(E4M3FN)/"
-        "bf8(E5M2) A/B combination are supported.");
+        "fp16, bf16, every fp8(E4M3FN)/bf8(E5M2) A/B combination, and iu8 "
+        "(A=B=i8, Acc=i32) are supported. On iu8, sign_a/sign_b select signed "
+        "vs unsigned packed bytes; clamp=true saturates the i32 acc output to "
+        "the input type range (i8/u8) on overflow (AMD WMMA CLAMP), clamp=false "
+        "wraps — default false so GEMM keeps full i32 partial sums. Must be "
+        "false on the float paths.");
   }
 };
 

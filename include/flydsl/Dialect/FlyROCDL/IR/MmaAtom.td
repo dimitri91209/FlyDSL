@@ -242,10 +242,10 @@ def FlyROCDL_MmaOpGFX11_WMMA : FlyROCDL_MmaOp<"MmaOpGFX11_WMMA", "gfx11.wmma", [
 //
 // RDNA4 shares the v8-operand WMMA register ABI with gfx1250 (each lane holds
 // K/2 A/B elements, accumulator rows blocked 8-per-lane-half) but its supported
-// floating-point forms use 16x16x16 and the 3-operand ROCDL intrinsic form.
-// gfx1250 uses different floating-point shapes and the mods/reuse operand form,
-// so it keeps its own `gfx1250.wmma` atom. Hence `gfx120x` rather than `gfx12`
-// in the name — this atom covers gfx1200 / gfx1201 only.
+// forms use 16x16x16 (fp16/bf16/fp8/bf8/iu8) and the 3-operand ROCDL intrinsic
+// form. gfx1250 uses different shapes (iu8 is K=64 there) and the mods/reuse
+// operand form, so it keeps its own `gfx1250.wmma` atom. Hence `gfx120x` rather
+// than `gfx12` in the name — this atom covers gfx1200 / gfx1201 only.
 
 def FlyROCDL_MmaOpGFX120X_WMMA : FlyROCDL_MmaOp<"MmaOpGFX120X_WMMA", "gfx120x.wmma", []> {
   let parameters = (ins
@@ -255,8 +255,11 @@ def FlyROCDL_MmaOpGFX120X_WMMA : FlyROCDL_MmaOp<"MmaOpGFX120X_WMMA", "gfx120x.wm
     "Type":$elemTyA,
     "Type":$elemTyB,
     "Type":$elemTyAcc,
-    // Integer-WMMA controls, forwarded to the ROCDL iu8/iu4 intrinsic. Ignored
-    // (and required to be false) on the floating-point paths. Always printed.
+    // Integer-WMMA (iu8) controls forwarded to the ROCDL intrinsic:
+    // signA/signB = signed vs unsigned packed bytes; clamp=true saturates the
+    // i32 acc output to the input-type range on overflow (AMD WMMA CLAMP),
+    // clamp=false wraps. Default false (GEMM wants full i32 partial sums).
+    // Ignored / must be false on floating-point paths. Always printed.
     "bool":$signA,
     "bool":$signB,
     "bool":$clamp
