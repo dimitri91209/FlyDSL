@@ -83,7 +83,12 @@ def pick_tile_config(M: int, N: int, K: int, wgps: int | None = None) -> TileCon
             return _CFG_128_128_128_B
         # Prefer 128x128 BK=64 (HIP default for K<4096).
         return _CFG_128_128_64
-    if K >= 2048:
+    # Docs: playbook §BLOCK picks (tiny→tile/BK deepen, not blind WGP bump);
+    # docs/kernel_tuning_guide.md (larger tile_k for latency-bound small M);
+    # docs/testing_benchmarking_guide.md CUDA-event median vs kitchen HIP;
+    # https://rocm.docs.amd.com/projects/FlyDSL/en/latest/
+    # Confirm 2026-09-30: 64x64x128 tiny ~1.43× WIN (PARITY_CONFIRM).
+    if K >= 128:
         return _CFG_64_64_128
     return _CFG_64_64_64
 
