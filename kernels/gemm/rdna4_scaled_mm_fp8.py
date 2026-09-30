@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 FlyDSL Project Contributors
-"""FP8 e4m3 tensorwise scaled_mm / GEMM for gfx1201 (RDNA4).
+"""FP8 e4m3 / e5m2 tensorwise scaled_mm / GEMM for gfx1201 (RDNA4).
 
 Computes ``C = scale_a * scale_b * (A_fp8 @ B_fp8.T)`` with per-tensor scales
-using multi-wave LDS-pipelined FP8 WMMA and a Wave32 epilogue. Body adapted
-from the measured R9700 lab kernel; does **not** require the gfx120x iu8
-atom patch (FP8 WMMA is already present on GFX120X).
+using multi-wave LDS-pipelined FP8 WMMA and a Wave32 epilogue. Supports both
+``float8_e4m3fn`` (fp8 cvt / WMMA) and ``float8_e5m2`` (bf8 cvt / WMMA) via the
+``e5m2`` specialize flag — parity with ``rdna4_fp8_quant`` / ``rdna4_stoch_fp8``.
+Does **not** require the gfx120x iu8 atom patch (FP8 WMMA is already present
+on GFX120X).
 
 Public launcher: ``build_scaled_mm_fp8_module``. Tile configs trade LDS and
 register pressure for occupancy on typical diffusion / LLM activation shapes.
@@ -88,9 +90,14 @@ def pick_tile_config(M: int, N: int, K: int, wgps: int | None = None) -> TileCon
 
 @lru_cache(maxsize=64)
 def build_scaled_mm_fp8_module(
-    out_name: str, cfg: TileConfig, skip_bounds: bool = False
+    out_name: str, cfg: TileConfig, skip_bounds: bool = False, e5m2: bool = False
 ):
-    """Compile multi-wave LDS FP8 WMMA GEMM for one (out_dtype, tile) pair."""
+    """Compile multi-wave LDS FP8 WMMA GEMM for one (out_dtype, tile, format) triple.
+
+    ``e5m2=False`` (default) uses e4m3 / ``Float8E4M3FN`` WMMA; ``e5m2=True``
+    uses e5m2 / ``Float8E5M2`` WMMA (bf8 path). Hosts pass matching packed
+    ``float8_e4m3fn`` or ``float8_e5m2`` operands.
+    """
     import flydsl.compiler as flyc
     import flydsl.expr as fx
     from flydsl.expr import const_expr, gpu, range_constexpr
@@ -101,9 +108,10 @@ def build_scaled_mm_fp8_module(
         "float16": fx.Float16,
         "float32": fx.Float32,
     }[out_name]
+    Fp8Ty = fx.Float8E5M2 if e5m2 else fx.Float8E4M3FN
     # Keep cache-safe names local to FlyDSL; no external kernel-signature helper is
     # intentionally not a dependency of this standalone repository kernel.
-    sig = f"{out_name}_{cfg.name}_bounds{int(skip_bounds)}"
+    sig = f"{out_name}_{cfg.name}_bounds{int(skip_bounds)}_e5m2{int(e5m2)}"
 
     BM, BN, BK = cfg.bm, cfg.bn, cfg.bk
     WARPS_M, WARPS_N = cfg.warps_m, cfg.warps_n
@@ -281,7 +289,7 @@ def build_scaled_mm_fp8_module(
         scale_ab = fx.Float32(sa_view.load()[0]) * fx.Float32(sb_view.load()[0])
 
         wmma_atom = fx.make_mma_atom(
-            fx.rocdl.WMMA(WM, WN, WK, fx.Float8E4M3FN, fx.Float32)
+            fx.rocdl.WMMA(WM, WN, WK, Fp8Ty, fx.Float32)
         )
 
         def wmma_acc(a_v8, b_v8, c_v8):

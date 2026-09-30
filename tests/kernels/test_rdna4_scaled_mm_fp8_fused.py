@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 FlyDSL Project Contributors
 
-"""Correctness tests for fused act-quant ⊕ FP8 scaled_mm (+ LoRA) on gfx1201."""
+"""Correctness tests for fused act-quant ⊕ FP8 e4m3/e5m2 scaled_mm (+ LoRA)."""
 
 import os
 import sys
@@ -42,7 +42,7 @@ if not ARCH.startswith("gfx120"):
     ],
 )
 def test_fused_act_quant_scaled_mm(m, n, k):
-    """Fused path matches separate quant + scaled_mm reference."""
+    """Fused path matches separate quant + scaled_mm reference (e4m3)."""
     torch.manual_seed(17)
     a_f = torch.randn((m, k), device="cuda", dtype=torch.bfloat16).clamp(-1, 1)
     b_f32 = torch.randn((n, k), device="cuda", dtype=torch.float32).clamp(-1, 1)
@@ -56,6 +56,28 @@ def test_fused_act_quant_scaled_mm(m, n, k):
         a_f, b_nk, scale_a, scale_b, out_dtype=torch.bfloat16
     )
     torch.testing.assert_close(out.float(), ref.float(), rtol=0.05, atol=0.15)
+
+
+def test_fused_act_quant_scaled_mm_e5m2():
+    """Fused e5m2 path (bf8 act quant + Float8E5M2 WMMA) matches reference."""
+    torch.manual_seed(21)
+    m = n = k = 64
+    a_f = torch.randn((m, k), device="cuda", dtype=torch.bfloat16).clamp(-1, 1)
+    b_nk = (
+        torch.randn((n, k), device="cuda", dtype=torch.float32)
+        .clamp(-1, 1)
+        .to(torch.float8_e5m2)
+        .contiguous()
+    )
+    scale_a = torch.tensor([0.75], device="cuda", dtype=torch.float32)
+    scale_b = torch.tensor([1.25], device="cuda", dtype=torch.float32)
+
+    out = scaled_mm_fp8_fused(a_f, b_nk, scale_a, scale_b, out_dtype=torch.bfloat16)
+    torch.cuda.synchronize()
+    ref = reference_scaled_mm_fp8_fused(
+        a_f, b_nk, scale_a, scale_b, out_dtype=torch.bfloat16
+    )
+    torch.testing.assert_close(out.float(), ref.float(), rtol=0.08, atol=0.25)
 
 
 @pytest.mark.parametrize("rank", [8, 16])
@@ -100,6 +122,48 @@ def test_fused_scaled_mm_lora_epilogue(rank):
     torch.testing.assert_close(out.float(), ref.float(), rtol=0.05, atol=0.2)
 
 
+def test_fused_scaled_mm_lora_epilogue_e5m2():
+    """LoRA-optional fused path also works with e5m2 weights."""
+    torch.manual_seed(29)
+    m = n = k = 64
+    rank = 8
+    a_f = torch.randn((m, k), device="cuda", dtype=torch.bfloat16).clamp(-1, 1)
+    b_nk = (
+        torch.randn((n, k), device="cuda", dtype=torch.float32)
+        .clamp(-1, 1)
+        .to(torch.float8_e5m2)
+        .contiguous()
+    )
+    scale_a = torch.tensor([0.8], device="cuda", dtype=torch.float32)
+    scale_b = torch.tensor([1.1], device="cuda", dtype=torch.float32)
+    lora_down = torch.randn((rank, k), device="cuda", dtype=torch.bfloat16) * 0.02
+    lora_up = torch.randn((n, rank), device="cuda", dtype=torch.bfloat16) * 0.02
+    lora_scale = 0.5
+
+    out = scaled_mm_fp8_fused(
+        a_f,
+        b_nk,
+        scale_a,
+        scale_b,
+        out_dtype=torch.bfloat16,
+        lora_down=lora_down,
+        lora_up=lora_up,
+        lora_scale=lora_scale,
+    )
+    torch.cuda.synchronize()
+    ref = reference_scaled_mm_fp8_fused(
+        a_f,
+        b_nk,
+        scale_a,
+        scale_b,
+        out_dtype=torch.bfloat16,
+        lora_down=lora_down,
+        lora_up=lora_up,
+        lora_scale=lora_scale,
+    )
+    torch.testing.assert_close(out.float(), ref.float(), rtol=0.08, atol=0.3)
+
+
 def test_reference_helper_cpu_math():
     """Pure torch reference stays consistent without launching the kernel."""
     torch.manual_seed(3)
@@ -114,6 +178,10 @@ def test_reference_helper_cpu_math():
     )
     assert out.shape == (32, 32)
     assert out.dtype == torch.bfloat16
+
+    b5 = torch.randn(32, 32).clamp(-1, 1).to(torch.float8_e5m2)
+    out5 = reference_scaled_mm_fp8_fused(a, b5, sa, sb)
+    assert out5.shape == (32, 32)
 
 
 if __name__ == "__main__":

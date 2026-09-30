@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 FlyDSL Project Contributors
-"""Fused act-quant ⊕ FP8 e4m3 scaled_mm (+ optional LoRA epilogue) for gfx1201.
+"""Fused act-quant ⊕ FP8 e4m3/e5m2 scaled_mm (+ optional LoRA epilogue) for gfx1201.
 
 Hot path for static FP8 weights with dynamic activations: quantize ``A`` from
-bf16/fp16/fp32 to e4m3 **inside** the GEMM kernel (prologue tile staging), then
-WMMA against resident FP8 ``B``, applying tensorwise ``scale_a * scale_b`` in
-the epilogue. Avoids a separate ``fp8_quant`` launch before ``scaled_mm``.
+bf16/fp16/fp32 to e4m3 or e5m2 **inside** the GEMM kernel (prologue tile
+staging; bf8 cvt when ``e5m2``), then WMMA against resident FP8 ``B``, applying
+tensorwise ``scale_a * scale_b`` in the epilogue. Avoids a separate
+``fp8_quant`` launch before ``scaled_mm``. Format parity with
+``rdna4_fp8_quant`` / ``rdna4_stoch_fp8`` (max 448 vs 57344).
 
 Optional single-adapter LoRA residual (Linear / keep math):
 
@@ -36,7 +38,9 @@ WM = WN = WK = 16
 WARP = 32
 LDS_PAD = 8
 _F8_E4M3_MAX = 448.0
+_F8_E5M2_MAX = 57344.0
 _SUPPORTED_LORA_RANKS = (0, 8, 16, 32, 64)
+_FP8_TORCH = (torch.float8_e4m3fn, torch.float8_e5m2)
 
 
 def _wgp_count() -> int:
@@ -53,6 +57,7 @@ def build_scaled_mm_fp8_fused_module(
     cfg: TileConfig,
     skip_bounds: bool = False,
     lora_rank: int = 0,
+    e5m2: bool = False,
 ):
     """Compile fused act-quant ⊕ FP8 WMMA GEMM, optionally with LoRA epilogue.
 
@@ -68,6 +73,9 @@ def build_scaled_mm_fp8_fused_module(
         Skip OOB guards when M/N are tile-aligned.
     lora_rank:
         ``0`` disables LoRA fusion; otherwise one of ``{8,16,32,64}``.
+    e5m2:
+        ``False`` → e4m3 (``cvt_pk_fp8_f32``, max 448, ``Float8E4M3FN`` WMMA).
+        ``True`` → e5m2 (``cvt_pk_bf8_f32``, max 57344, ``Float8E5M2`` WMMA).
     """
     import flydsl.compiler as flyc
     import flydsl.expr as fx
@@ -91,8 +99,12 @@ def build_scaled_mm_fp8_fused_module(
         "float32": fx.Float32,
     }[in_name]
     use_lora = lora_rank > 0
+    fp8_max = _F8_E5M2_MAX if e5m2 else _F8_E4M3_MAX
+    cvt_pk = fx.rocdl.cvt_pk_bf8_f32 if e5m2 else fx.rocdl.cvt_pk_fp8_f32
+    Fp8Ty = fx.Float8E5M2 if e5m2 else fx.Float8E4M3FN
     sig = (
-        f"{out_name}_{in_name}_{cfg.name}_bounds{int(skip_bounds)}_R{lora_rank}"
+        f"{out_name}_{in_name}_{cfg.name}_bounds{int(skip_bounds)}"
+        f"_R{lora_rank}_e5m2{int(e5m2)}"
     )
 
     BM, BN, BK = cfg.bm, cfg.bn, cfg.bk
@@ -200,8 +212,8 @@ def build_scaled_mm_fp8_fused_module(
         scale_b = fx.Float32(sb_view.load()[0])
         scale_ab = scale_a * scale_b
         inv_a = fx.Float32(1.0) / scale_a
-        vmax = fx.Float32(_F8_E4M3_MAX)
-        vmin = fx.Float32(-_F8_E4M3_MAX)
+        vmax = fx.Float32(fp8_max)
+        vmin = fx.Float32(-fp8_max)
 
         def load16_gmem_b(elem_ptr, byte_idx, inb):
             i32_ptr = as_i32(elem_ptr)
@@ -242,18 +254,15 @@ def build_scaled_mm_fp8_fused_module(
                     v = InTy(raw[0]).to(fx.Float32)
                 v = inb.select(v, fx.Float32(0.0))
                 x = fx.max(fx.min(v * inv_a, vmax), vmin)
-                elems.append(x)
+                # Match rdna4_fp8_quant: cvt_pk_* expects MLIR Values (bf8 is strict).
+                elems.append(x.ir_value())
 
             words = []
             for w in range_constexpr(4):
                 bi = w * 4
                 pk = fx.Int32(0).ir_value()
-                pk = fx.rocdl.cvt_pk_fp8_f32(
-                    T.i32, elems[bi + 0], elems[bi + 1], pk, 0
-                )
-                pk = fx.rocdl.cvt_pk_fp8_f32(
-                    T.i32, elems[bi + 2], elems[bi + 3], pk, 1
-                )
+                pk = cvt_pk(T.i32, elems[bi + 0], elems[bi + 1], pk, 0)
+                pk = cvt_pk(T.i32, elems[bi + 2], elems[bi + 3], pk, 1)
                 words.append(fx.Int32(pk))
             return Vec.from_elements(words, fx.Int32)
 
@@ -325,7 +334,7 @@ def build_scaled_mm_fp8_fused_module(
             return Vec(view.load()).bitcast(fx.Int8)
 
         wmma_atom = fx.make_mma_atom(
-            fx.rocdl.WMMA(WM, WN, WK, fx.Float8E4M3FN, fx.Float32)
+            fx.rocdl.WMMA(WM, WN, WK, Fp8Ty, fx.Float32)
         )
 
         def wmma_acc(a_v8, b_v8, c_v8):
@@ -598,6 +607,12 @@ def build_scaled_mm_fp8_fused_module(
     return launch
 
 
+def _fp8_max_for(dtype: torch.dtype) -> float:
+    if dtype == torch.float8_e5m2:
+        return _F8_E5M2_MAX
+    return _F8_E4M3_MAX
+
+
 def reference_scaled_mm_fp8_fused(
     a_f: torch.Tensor,
     b_nk: torch.Tensor,
@@ -611,9 +626,9 @@ def reference_scaled_mm_fp8_fused(
     """Torch reference: separate quant + mm (+ optional LoRA), for numeric tests."""
     sa = float(scale_a.reshape(-1)[0].item())
     sb = float(scale_b.reshape(-1)[0].item())
-    a_q = (a_f.float() / sa).clamp(-_F8_E4M3_MAX, _F8_E4M3_MAX).to(
-        torch.float8_e4m3fn
-    )
+    fp8_dtype = b_nk.dtype if b_nk.dtype in _FP8_TORCH else torch.float8_e4m3fn
+    fp8_max = _fp8_max_for(fp8_dtype)
+    a_q = (a_f.float() / sa).clamp(-fp8_max, fp8_max).to(fp8_dtype)
     out = (a_q.float() @ b_nk.float().T) * sa * sb
     if lora_down is not None and lora_up is not None:
         # F.linear chain: hidden = a @ down.T; delta = hidden @ up.T
@@ -633,10 +648,15 @@ def scaled_mm_fp8_fused(
     lora_up: torch.Tensor | None = None,
     lora_scale: float | torch.Tensor = 1.0,
     stream=None,
+    e5m2: bool | None = None,
 ) -> torch.Tensor:
     """Host wrapper: fused act-quant ⊕ FP8 scaled_mm with optional single LoRA.
 
-    ``a_f`` is bf16/fp16/fp32 ``[M, K]``; ``b_nk`` is float8_e4m3fn ``[N, K]``.
+    ``a_f`` is bf16/fp16/fp32 ``[M, K]``; ``b_nk`` is ``float8_e4m3fn`` or
+    ``float8_e5m2`` ``[N, K]``. Format is inferred from ``b_nk.dtype`` unless
+    ``e5m2`` is set explicitly. Act-quant prologue uses bf8 cvt + max 57344
+    when e5m2, else fp8 cvt + max 448.
+
     LoRA tensors (when provided) match Comfy Linear keep: down ``[R, K]``,
     up ``[N, R]``, same dtype as activations. Multi-adapter: host-loop this
     helper (or keep Python ``h(x)`` for remaining adapters).
@@ -647,8 +667,17 @@ def scaled_mm_fp8_fused(
 
     if a_f.dim() != 2 or b_nk.dim() != 2:
         raise ValueError("scaled_mm_fp8_fused expects 2D operands")
-    if b_nk.dtype != torch.float8_e4m3fn:
-        raise ValueError(f"b_nk must be float8_e4m3fn, got {b_nk.dtype}")
+    if b_nk.dtype not in _FP8_TORCH:
+        raise ValueError(
+            f"b_nk must be float8_e4m3fn or float8_e5m2, got {b_nk.dtype}"
+        )
+    if e5m2 is None:
+        e5m2 = b_nk.dtype == torch.float8_e5m2
+    elif e5m2 != (b_nk.dtype == torch.float8_e5m2):
+        want = torch.float8_e5m2 if e5m2 else torch.float8_e4m3fn
+        raise ValueError(
+            f"e5m2={e5m2} disagrees with b_nk.dtype={b_nk.dtype} (want {want})"
+        )
     m, k = a_f.shape
     n = b_nk.shape[0]
     if b_nk.shape[1] != k:
@@ -680,7 +709,7 @@ def scaled_mm_fp8_fused(
     cfg = pick_tile_config(m, n, k)
     skip_bounds = m % cfg.bm == 0 and n % cfg.bn == 0
     launch = build_scaled_mm_fp8_fused_module(
-        out_name, in_name, cfg, skip_bounds, lora_rank
+        out_name, in_name, cfg, skip_bounds, lora_rank, e5m2
     )
     out = torch.empty((m, n), dtype=out_dtype, device=a_f.device)
     scale_a = scale_a.to(device=a_f.device, dtype=torch.float32).reshape(1).contiguous()

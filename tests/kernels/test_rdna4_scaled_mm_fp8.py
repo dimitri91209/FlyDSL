@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 FlyDSL Project Contributors
 
-"""Correctness tests for RDNA4 FP8 e4m3 tensorwise scaled_mm on gfx1201."""
+"""Correctness tests for RDNA4 FP8 e4m3/e5m2 tensorwise scaled_mm on gfx1201."""
 
 import os
 import sys
@@ -39,12 +39,14 @@ def _ptr(t: torch.Tensor):
     return flyc.from_c_void_p(fx.Uint8, t.data_ptr())
 
 
-def _run_scaled_mm(a, b_nk, scale_a, scale_b, out_dtype=torch.bfloat16):
+def _run_scaled_mm(a, b_nk, scale_a, scale_b, out_dtype=torch.bfloat16, e5m2=False):
     m, k = a.shape
     n = b_nk.shape[0]
     cfg = pick_tile_config(m, n, k)
     skip_bounds = m % cfg.bm == 0 and n % cfg.bn == 0
-    launch = build_scaled_mm_fp8_module(out_dtype_name(out_dtype), cfg, skip_bounds)
+    launch = build_scaled_mm_fp8_module(
+        out_dtype_name(out_dtype), cfg, skip_bounds, e5m2=e5m2
+    )
     out = torch.empty((m, n), dtype=out_dtype, device=a.device)
     _run_compiled(
         launch,
@@ -87,10 +89,27 @@ def test_rdna4_scaled_mm_fp8(m, n, k):
     scale_a = torch.tensor([0.75], device="cuda", dtype=torch.float32)
     scale_b = torch.tensor([1.25], device="cuda", dtype=torch.float32)
 
-    out = _run_scaled_mm(a, b_nk, scale_a, scale_b)
+    out = _run_scaled_mm(a, b_nk, scale_a, scale_b, e5m2=False)
     torch.cuda.synchronize()
     ref = (a.float() @ b_nk.float().T) * scale_a[0] * scale_b[0]
     torch.testing.assert_close(out.float(), ref, rtol=0.02, atol=0.08)
+
+
+def test_rdna4_scaled_mm_fp8_e5m2():
+    """Tensorwise e5m2 GEMM matches f32 reference (bf8 / Float8E5M2 WMMA)."""
+    torch.manual_seed(19)
+    m = n = k = 64
+    a_f32 = torch.randn((m, k), device="cuda", dtype=torch.float32).clamp(-1, 1)
+    b_f32 = torch.randn((n, k), device="cuda", dtype=torch.float32).clamp(-1, 1)
+    a = a_f32.to(torch.float8_e5m2).contiguous()
+    b_nk = b_f32.to(torch.float8_e5m2).contiguous()
+    scale_a = torch.tensor([0.75], device="cuda", dtype=torch.float32)
+    scale_b = torch.tensor([1.25], device="cuda", dtype=torch.float32)
+
+    out = _run_scaled_mm(a, b_nk, scale_a, scale_b, e5m2=True)
+    torch.cuda.synchronize()
+    ref = (a.float() @ b_nk.float().T) * scale_a[0] * scale_b[0]
+    torch.testing.assert_close(out.float(), ref, rtol=0.05, atol=0.2)
 
 
 if __name__ == "__main__":
