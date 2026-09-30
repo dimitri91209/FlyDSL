@@ -1,6 +1,6 @@
 # Pre-built kernel library guide
 
-This guide covers the available FlyDSL kernels — normalization, softmax, GEMM, and attention — along with their configuration options, supported data types, pipeline designs, and shared utilities.
+This guide covers the available FlyDSL kernels — normalization, softmax, GEMM, attention, and gfx120x/RDNA4 suite kernels — along with their configuration options, supported data types, pipeline designs, and shared utilities.
 
 ## Quick reference
 
@@ -11,7 +11,42 @@ This guide covers the available FlyDSL kernels — normalization, softmax, GEMM,
 | **Softmax** | `build_softmax_module(M, N, dtype)` | Layout API (`@flyc.kernel`) | f32, f16, bf16 | Register-buffered softmax, opt-in autotuning |
 | **Softmax backward** | `build_softmax_bwd_module(N, dtype)` | Layout API (`@flyc.kernel`) | f32, f16, bf16 | fp32 dot reduction, native-dtype register buffering |
 | **GEMM** | `compile_preshuffle_gemm(...)` | `@flyc.kernel` | fp8, int8, fp16, bf16 | Preshuffle B, ping-pong LDS, MFMA 16x16 |
-| **FlashAttention** | `build_flash_attn_func_module(...)` | `@flyc.kernel` | bf16, f16 (any arch); fp8 e4m3fn (gfx950, D=128, dense) | Dual-wave SWP fwd, GQA/MQA, causal, descale ABI |
+| **FlashAttention** | `build_flash_attn_func_module(...)` / gfx120x host | `@flyc.kernel` | bf16/f16 (generic+gfx950+**gfx120x**); fp8 e4m3fn/e5m2 (**gfx120x** + gfx950 e4m3) | gfx120x: dense self/cross, causal, KV-pad mask, additive attn mask, D≤384; FP8 e4m3fn+e5m2; int8 iu8; iu4 kitchen-pack; gfx950 dualwave SWP |
+| **gfx120x scaled_mm FP8** | `scaled_mm_fp8_auto` (default) / `build_scaled_mm_fp8_module(...)` | `@flyc.kernel` | fp8 e4m3fn/e5m2 → bf16 | Prefer `_auto` tile picker; plain module for fixed tiles |
+| **gfx120x scaled_mm FP8 fused** | `build_scaled_mm_fp8_fused_module(...)` | `@flyc.kernel` | fp8 + bf16 LoRA residual | Act-quant+mm; multi-LoRA host residual |
+| **gfx120x int8 linear fused** | `build_int8_linear_fused_module(...)` / `int8_linear_fused` | `@flyc.kernel` | int8 + bf16 LoRA residual | Act-quant+iu8; multi-LoRA host residual |
+| **gfx120x int8 linear (iu8 int8 linear)** | `build_int8_linear_module(...)` | `@flyc.kernel` | int8 iu8 WMMA → bf16 | Needs gfx120x iu8 atom |
+| **gfx120x W8A16 linear** | `build_w8a16_linear_module(...)` | `@flyc.kernel` | bf16 acts; int8/FP8 e4m3fn/e5m2 weights | Small/mid; default size dispatcher routes large → iu8 |
+| **gfx120x int8 linear size dispatcher** | `int8_linear_auto` / `int8_linear_dispatched` | host | W8A16 or iu8 | **DEFAULT** EXPERIMENTAL: M≤128 or M×K≤500k → W8A16, else iu8 |
+| **gfx120x iu4 GEMM** | `iu4_gemm` / `build_iu4_gemm_module` | `@flyc.kernel` | packed int4 → bf16/fp16/fp32 or i32 | Native iu4 WMMA (default when K%16==0); unpack→iu8 fallback |
+| **gfx120x zero-LDS N-major / fused_gemm_TN** | `build_fused_gemm_tn_module` / `fused_gemm_tn` / `fused_swiglu_mlp_inreg` / `fused_swiglu_mlp_nmajor` | `@flyc.kernel` | bf16/fp16 | A/B-swap N-major D0; **in-reg SiLU×mul** fuse (16×16); thin host for other sizes |
+| **gfx120x RoPE / RMS+RoPE / AdaLN** | `build_rope_*` / `build_rms_rope_*` / `build_adaln_module` | `@flyc.kernel` | bf16 | Incl. Q/K fused builders |
+| **gfx120x quant / SwiGLU / ConvRot** | same builders; ConvRot linear default `linear_dtype="int4"` | `@flyc.kernel` | fp8/int8/bf16/W4 | ConvRot default = native iu4; AWQ/SVD are separate families (see idle doc) |
+
+
+## How to call gfx120x defaults (read with the idle doc)
+
+There is no environment flag. Call the default entry for each family:
+
+| Goal | Default call | Force older / other path |
+|---|---|---|
+| Int8-weight linear | `int8_linear_auto` / `int8_linear_dispatched` | `force_kernel="w8a16"` or `"iu8"` |
+| FP8 scaled_mm | `scaled_mm_fp8_auto` | plain `scaled_mm_fp8` with a fixed tile |
+| ConvRot W4A4 linear | `convrot_w4a4_linear(...)` (**default int4 / native iu4**) | `linear_dtype="int8"` for unpack→iu8 |
+| Bare packed int4 GEMM | `iu4_gemm(...)` | `prefer_native=False` |
+
+**EXPERIMENTAL:** int8 and FP8 size/tile rules come from idle Speed vs HIP
+crossovers on one R9700 (`M_star=128`, `MK_star=500000` for int8). They are
+the shipped defaults until a per-device autotune cache replaces the numbers.
+Full tables and the pick(M,K) math:
+[`docs/gfx120x_idle_speed_vs_hip.md`](gfx120x_idle_speed_vs_hip.md).
+
+**Native int4 vs AWQ:** native iu4 / ConvRot int4 is WIN/PARITY vs HIP on
+measured shapes. AWQ W4A16 GEMV is a different family and currently LOSE —
+do not read AWQ numbers as “int4 is slow.”
+
+Suggested PR title when opening is approved:
+`[Kernel][Feature][Perf][Doc][Test] RDNA4 expanded ops: FlashAttention / attention (RoPE/RMS-RoPE/AdaLN), native iu4/int4 + iu8/int8 WMMA, int4/int8 quant, size-dispatch defaults`
 
 All kernels use the `@flyc.kernel`/`@flyc.jit` API from `flydsl.compiler` and `flydsl.expr` (`python/flydsl/`).
 
@@ -311,14 +346,21 @@ launch_fn(arg_c, arg_a, arg_b, arg_scale_a, arg_scale_b, arg_bias, M_val, N_val,
 
 ---
 
-## 3b. FlashAttention forward (`kernels/attention/flash_attn_generic.py`, `kernels/attention/flash_attn_gfx950.py`, `kernels/attention/flash_attn_fp8_gfx950.py`)
+## 3b. FlashAttention forward (`kernels/attention/flash_attn_*.py`)
 
-Dense FlashAttention forward. `build_flash_attn_func_module(num_heads, head_dim,
-causal=..., dtype_str=..., num_kv_heads=...)` is the public builder; on
-gfx950 + `head_dim == 128` it routes to the dual-wave software-pipelined fast path
-(`build_flash_attn_dualwave_swp_module`), otherwise to the generic fallback.
-Supports MHA and GQA/MQA (`num_kv_heads <= num_heads`), causal and non-causal,
-arbitrary sequence length, and (bf16/f16) packed varlen + split-K.
+Dense FlashAttention forward. Public entry: `kernels.attention.flash_attn_interface.flydsl_flash_attn_func`.
+
+| Arch | Modules | Coverage |
+|---|---|---|
+| **gfx120x (RDNA4)** | `flash_attn_gfx120x.py`, `flash_attn_fp8_gfx120x.py`, `flash_attn_gfx120x_host.py` | bf16/fp16 dense self + non-causal cross; causal self; FP8 e4m3fn + e5m2 (+ descales); KV tile pad + `seq_len_kv_valid`; adaptive BLOCK_M / waves_per_eu; D in [64,256] `%32==0`; optional dense additive attn mask/bias; noop mask ignored |
+| **gfx950** | `flash_attn_gfx950.py`, `flash_attn_fp8_gfx950.py`, paged | Dual-wave SWP, GQA/MQA, varlen, split-K, paged KV, bias/ALiBi/sink |
+| **generic / gfx942** | `flash_attn_generic.py` | bf16/f16 dense fallback |
+
+On gfx120x the interface early-routes to the RDNA4 host (keeps gfx950/generic
+paths intact). Int8 is **not** an attention QKV dtype (GEMM/ConvRot only).
+gfx120x FA pack: dense bf16/fp16/fp8/int8/iu4; in-kernel bottom-right causal (self+cross); per-head ALiBi; host ``return_lse``; sink / packed-varlen / paged-KV gather / split-K via ``flash_attn_gfx120x_ext`` (dense FA + host combine). Native iu4 WMMA FA prefers the ``rdna4_iu4_gemm`` i32 load path; unpack→iu8 remains the validated fallback when the fused body is gated.
+
+Suggested PR title fragment: **FlashAttention / RDNA4 attention**.
 
 ### fp8 (e4m3fn) forward
 
@@ -352,6 +394,85 @@ python3 tests/kernels/test_flash_attn_fwd.py --dtype fp8 --compare --warmup 10 -
 ```
 
 ---
+
+
+## 3c. gfx120x / RDNA4 kernels (R9700)
+
+Additive suite for Wave32 WMMA on the GFX120X family (device id often
+`gfx1201`). Prefer these over CDNA MFMA / gfx950 paths when targeting RDNA4.
+
+Idle Speed vs HIP methodology and measured table:
+`docs/gfx120x_idle_speed_vs_hip.md`.
+
+### Int8 linear — two pipelines + size dispatcher
+
+| Surface | Module | Pipeline |
+|---|---|---|
+| W8A16 linear | `kernels/gemm/rdna4_w8a16_linear.py` | int8 / FP8 e4m3fn / e5m2 weights → bf16 in-register; bf16/fp16 activations → bf16 out (float WMMA; no iu8 atom) |
+| iu8 int8 linear | `kernels/gemm/rdna4_int8_linear.py` | int8 activations × int8 weights → bf16 out (requires gfx120x iu8 WMMA atom) |
+| Fused act-quant + iu8 (+ LoRA residual) | `kernels/gemm/rdna4_int8_linear_fused.py` | Multi-LoRA as host bf16 residuals (same policy as FP8 fused) |
+| Size dispatcher | `kernels/gemm/rdna4_int8_linear_dispatch.py` | Host rule: small/mid → W8A16; large → iu8 |
+| Auto entry | `kernels/gemm/rdna4_int8_linear_auto.py` | Opt-in call site that applies the dispatcher |
+
+Without the dispatcher, forcing W8A16 on large `[1024,4096,4096]` loses to HIP
+(~×0.57). The auto entry picks iu8 and wins (~×1.57) on that shape. See the
+idle doc for the full argument and numbers.
+
+### FP8 GEMM
+
+| Surface | Module | Notes |
+|---|---|---|
+| Scaled FP8 GEMM | `kernels/gemm/rdna4_scaled_mm_fp8.py` | e4m3fn and e5m2 |
+| Fused act-quant + scaled_mm (+ LoRA residual) | `kernels/gemm/rdna4_scaled_mm_fp8_fused.py` | Multi-LoRA as host bf16 residuals |
+| Tile auto-picker | `kernels/gemm/rdna4_scaled_mm_fp8_auto.py` | Same kernel; measured tile pick (wanish ~×1.00 → ~×3.97) |
+| Native iu4 GEMM | `kernels/gemm/rdna4_iu4_gemm.py` | Packed int4 → iu4 atom; ConvRot default `linear_dtype='int4'` |
+| Zero-LDS N-major / fused_gemm_TN (+ in-reg SwiGLU) | `kernels/gemm/rdna4_fused_mlp_nmajor.py` | A/B swap on GEMM0; in-reg SiLU×mul; 16×16 panels; production layouts untouched |
+
+### Norm / RoPE
+
+| Surface | Module |
+|---|---|
+| RoPE (+ split-half, Q/K fused) | `kernels/norm/rope_gfx120x.py` |
+| RMS+RoPE (+ split, Q/K fused) | `kernels/norm/rms_rope_gfx120x.py` |
+| AdaLN | `kernels/norm/adaln_gfx120x.py` |
+| Shared helpers | `kernels/norm/gfx120x_helpers.py` |
+| **FlashAttention bf16/fp16** | `kernels/attention/flash_attn_gfx120x.py` + `_host` |
+| **FlashAttention FP8 e4m3fn/e5m2** | `kernels/attention/flash_attn_fp8_gfx120x.py` + `_host` |
+
+### Quant / elementwise
+
+| Surface | Module |
+|---|---|
+| FP8 quant/dequant | `kernels/quant/rdna4_fp8_quant.py` |
+| Stochastic FP8 | `kernels/quant/rdna4_stoch_fp8.py` |
+| SwiGLU (SiLU×mul / chunk) | `kernels/quant/rdna4_swiglu.py` |
+| Int8 rowwise quant | `kernels/quant/rdna4_quantize_int8_rowwise.py` |
+| Int8 tensorwise quant | `kernels/quant/rdna4_quantize_int8_tensorwise.py` |
+| Int8 ConvRot weight quant + linear host | `kernels/quant/rdna4_int8_convrot.py` |
+| ConvRot W4A4 weight quant + linear (**default** native `int4`; `int8` = unpack→iu8) | `kernels/quant/rdna4_convrot_w4a4.py` |
+| Asym W4A8 dequant (+ host quant) + int8-linear | `kernels/quant/rdna4_asym_w4a8.py` |
+| AWQ W4A16 dequant + fused GEMV | `kernels/quant/rdna4_awq_w4a16.py` |
+| SVDQuant W4A4 dequant + fused scaled_mm (host LoRA) | `kernels/quant/rdna4_svdquant_w4a4.py` |
+| Shared int4 pack/unpack + groupwise dequant | `kernels/quant/rdna4_int4_codec.py` |
+| Shared helpers | `kernels/quant/rdna4_common.py` |
+
+### Compiler atoms (iu8 / iu4)
+
+GFX120X integer WMMA in `include/flydsl/Dialect/FlyROCDL/IR/MmaAtom.td`,
+`lib/Dialect/FlyROCDL/GFX120X/MmaAtom.cpp`, Python bind in
+`lib/Bindings/Python/FlyROCDLExtension.cpp`:
+
+| Atom | Intrinsic | A/B packing |
+|---|---|---|
+| iu8 | `wmma_i32_16x16x16_iu8` | gfx12 integer WMMA (see atom tests) |
+| iu4 | `wmma_i32_16x16x16_iu4` | **scalar i32** A/B (gfx12 ABI; not gfx11 `v2i32`) |
+
+Device pin: `tests/kernels/test_rdna4_integer_wmma_atom.py` (alongside fp
+`test_rdna4_wmma_atom.py`). FileCheck: `tests/mlir/Conversion/wmma_gfx120x.mlir`.
+
+Native GEMM on iu4: `kernels/gemm/rdna4_iu4_gemm.py`. Unpack→iu8 remains a
+valid W4 fallback when native packing does not apply.
+
 
 ## 4. Shared utilities
 
@@ -430,6 +551,13 @@ What operation do you need?
 │   │   ├── FP8 / INT8 / FP16 / BF16
 │   │   └── → compile_preshuffle_gemm()
 │   │
+│   ├── gfx120x / RDNA4 (Wave32 WMMA)
+│   │   ├── FP8 scaled_mm (+ fused / tile auto) → kernels/gemm/rdna4_scaled_mm_fp8*.py
+│   │   ├── Int8 fused act-quant + iu8 (+ host LoRA) → kernels/gemm/rdna4_int8_linear_fused.py
+│   │   ├── iu8 int8 linear / W8A16 linear / size dispatcher → rdna4_int8_linear / rdna4_w8a16_linear / rdna4_int8_linear_dispatch*
+│   │   ├── Native iu4 GEMM → rdna4_iu4_gemm (ConvRot default int4)
+│   │   └── See docs/gfx120x_idle_speed_vs_hip.md
+│   │
 │   └── Uses new @flyc.kernel API
 │       └── See kernels/gemm/preshuffle_gemm.py
 │
@@ -465,6 +593,33 @@ What operation do you need?
 | `kernels/comm/custom_all_reduce.py` | Multi-GPU all-reduce |
 | `kernels/gemm/rdna_f16_gemm.py` | RDNA FP16 GEMM |
 | `kernels/gemm/rdna_fp8_preshuffle_gemm.py` | RDNA FP8 GEMM |
+| `kernels/gemm/rdna4_scaled_mm_fp8.py` | gfx120x FP8 scaled_mm |
+| `kernels/gemm/rdna4_scaled_mm_fp8_fused.py` | gfx120x FP8 scaled_mm fused (+ LoRA residual) |
+| `kernels/gemm/rdna4_int8_linear_fused.py` | gfx120x int8 linear fused (+ LoRA host residual) |
+| `kernels/gemm/rdna4_scaled_mm_fp8_auto.py` | gfx120x FP8 scaled_mm tile auto-picker |
+| `kernels/gemm/rdna4_int8_linear.py` | gfx120x iu8 int8 linear |
+| `kernels/gemm/rdna4_w8a16_linear.py` | gfx120x W8A16 linear (int8 / FP8 e4m3fn / e5m2 weights) |
+| `kernels/gemm/rdna4_int8_linear_dispatch.py` | gfx120x W8A16 / iu8 size dispatcher (gate) |
+| `kernels/gemm/rdna4_int8_linear_auto.py` | gfx120x int8 linear size-dispatcher (gate) entry |
+| `kernels/gemm/rdna4_fused_mlp_nmajor.py` | gfx120x zero-LDS N-major / fused_gemm_TN + in-reg SwiGLU fuse |
+| `kernels/gemm/rdna4_iu4_gemm.py` | gfx120x native iu4 WMMA GEMM |
+| `kernels/norm/rope_gfx120x.py` | gfx120x RoPE (+ Q/K fused) |
+| `kernels/norm/rms_rope_gfx120x.py` | gfx120x RMS+RoPE (+ Q/K fused) |
+| `kernels/norm/adaln_gfx120x.py` | gfx120x AdaLN |
+| `kernels/norm/gfx120x_helpers.py` | gfx120x norm helpers |
+| `kernels/quant/rdna4_fp8_quant.py` | gfx120x FP8 quant/dequant |
+| `kernels/quant/rdna4_stoch_fp8.py` | gfx120x stochastic FP8 |
+| `kernels/quant/rdna4_swiglu.py` | gfx120x SwiGLU |
+| `kernels/quant/rdna4_quantize_int8_rowwise.py` | gfx120x int8 rowwise quant |
+| `kernels/quant/rdna4_quantize_int8_tensorwise.py` | gfx120x int8 tensorwise quant |
+| `kernels/quant/rdna4_int8_convrot.py` | gfx120x int8 ConvRot weight quant |
+| `kernels/quant/rdna4_convrot_w4a4.py` | gfx120x ConvRot W4A4 weight quant |
+| `kernels/quant/rdna4_asym_w4a8.py` | gfx120x Asym W4A8 dequant / host quant |
+| `kernels/quant/rdna4_awq_w4a16.py` | gfx120x AWQ W4A16 dequant + fused GEMV |
+| `kernels/quant/rdna4_svdquant_w4a4.py` | gfx120x SVDQuant W4A4 fused scaled_mm (packed, host LoRA) |
+| `kernels/quant/rdna4_int4_codec.py` | gfx120x shared int4/uint4 pack + groupwise dequant |
+| `kernels/quant/rdna4_common.py` | gfx120x quant helpers |
+| `docs/gfx120x_idle_speed_vs_hip.md` | gfx120x idle Speed vs HIP |
 | `kernels/gemm/gemm_common_gfx1250.py` | GFX1250 GEMM common |
 | `kernels/gemm/gemm_bf16_gfx1250.py` | GFX1250 BF16/FP16 GEMM |
 | `kernels/gemm/gemm_a8w8_gfx1250.py` | GFX1250 FP8 GEMM (per-token/per-channel and 128x128 blockscale) |
@@ -491,8 +646,36 @@ What operation do you need?
 | `tests/kernels/test_fused_rope_cache.py` | Fused RoPE + KV cache |
 | `tests/kernels/test_allreduce.py` | Multi-GPU all-reduce |
 | `tests/kernels/test_rdna_gemm.py` | RDNA GEMM |
+| `tests/kernels/test_rdna4_scaled_mm_fp8.py` | gfx120x FP8 scaled_mm |
+| `tests/kernels/test_rdna4_scaled_mm_fp8_fused.py` | gfx120x FP8 scaled_mm fused |
+| `tests/kernels/test_rdna4_int8_linear_fused.py` | gfx120x int8 linear fused |
+| `tests/kernels/test_rdna4_scaled_mm_fp8_auto.py` | gfx120x FP8 scaled_mm size dispatcher (gate) |
+| `tests/kernels/test_rdna4_int8_linear.py` | gfx120x int8 linear |
+| `tests/kernels/test_rdna4_w8a16_linear.py` | gfx120x W8A16 linear |
+| `tests/kernels/test_rdna4_int8_linear_dispatch.py` | gfx120x int8 linear size dispatcher |
+| `tests/kernels/test_rdna4_int8_linear_auto.py` | gfx120x int8 linear size dispatcher (gate) |
+| `tests/kernels/test_rdna4_fused_mlp_nmajor.py` | gfx120x zero-LDS N-major / fused_gemm_TN / in-reg SwiGLU |
+| `tests/kernels/test_rdna4_integer_wmma_atom.py` | gfx120x iu8 / iu4 WMMA atom |
+| `tests/kernels/test_gfx120x_norm_rope.py` | gfx120x RoPE / RMS+RoPE / AdaLN |
+| `tests/kernels/test_rdna4_fp8_quant.py` | gfx120x FP8 quant |
+| `tests/kernels/test_rdna4_stoch_fp8.py` | gfx120x stochastic FP8 |
+| `tests/kernels/test_rdna4_swiglu.py` | gfx120x SwiGLU |
+| `tests/kernels/test_rdna4_quantize_int8_rowwise.py` | gfx120x int8 rowwise |
+| `tests/kernels/test_rdna4_quantize_int8_tensorwise.py` | gfx120x int8 tensorwise |
+| `tests/kernels/test_rdna4_int8_convrot.py` | gfx120x int8 ConvRot |
+| `tests/kernels/test_rdna4_convrot_w4a4.py` | gfx120x ConvRot W4A4 |
+| `tests/kernels/test_rdna4_asym_w4a8.py` | gfx120x Asym W4A8 |
+| `tests/kernels/test_rdna4_awq_w4a16.py` | gfx120x AWQ W4A16 dequant / fused GEMV |
+| `tests/kernels/test_rdna4_svdquant_w4a4.py` | gfx120x SVDQuant W4A4 |
+| `tests/mlir/Conversion/wmma_gfx120x.mlir` | gfx120x WMMA FileCheck |
 | `tests/kernels/test_gemm_fp8fp4_gfx1250.py` | GFX1250 FP8/FP4 GEMM |
 | `tests/kernels/test_gemm_bf16_gfx1250.py` | GFX1250 BF16/FP16 GEMM |
 | `tests/kernels/test_vec_add.py` | Vector addition |
 | `tests/kernels/test_quant.py` | Quantization utilities |
 | `tests/kernels/benchmark_common.py` | Shared benchmark infrastructure |
+
+### GFX120X iu4 WMMA (atom + GEMM)
+
+See **Compiler atoms** above and `docs/gfx120x_idle_speed_vs_hip.md` (Native iu4
+section) for packing, ConvRot default `linear_dtype='int4'`, and idle numbers.
+AWQ / SVDQuant stay on fused / unpack paths; ConvRot default remains unpack→iu8.

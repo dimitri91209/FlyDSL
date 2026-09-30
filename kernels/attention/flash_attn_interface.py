@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 FlyDSL Project Contributors
 
-"""High-level FlyDSL Flash Attention API for gfx950 / gfx942.
+"""High-level FlyDSL Flash Attention API for gfx950 / gfx942 / gfx120x.
+
+gfx120x routes dense bf16/fp16/fp8 to ``flash_attn_gfx120x_host`` (causal×cross,
+mask ranks, return_lse, uniform ALiBi). Paged/varlen/split-K/sink on gfx120x via dense FA + host ext gather/combine.
 
 Wraps ``flash_attn_generic.build_flash_attn_func_module`` (gfx942-compatible,
 dense self/cross-attention) and ``flash_attn_gfx950.build_flash_attn_dualwave_swp_module``
@@ -39,7 +42,7 @@ from kernels.attention.flash_attn_utils import (
     dualwave_splitk_workspace_elems,
 )
 
-__all__ = ["flydsl_flash_attn_func", "dualwave_splitk_workspace_elems"]
+__all__ = ["flydsl_flash_attn_func", "flydsl_flash_attn_fp8_func", "dualwave_splitk_workspace_elems"]
 
 _DTYPE_MAP = {torch.bfloat16: "bf16", torch.float16: "f16", torch.float8_e4m3fn: "fp8"}
 
@@ -1034,7 +1037,7 @@ def flydsl_flash_attn_func(
     # CUDA/HIP stream; defaults to the current stream for q.device.
     stream: Optional[torch.cuda.Stream] = None,
 ) -> torch.Tensor:
-    """Run FlyDSL Flash Attention (gfx950 DUALWAVE_SWP / gfx942 generic fallback).
+    """Run FlyDSL Flash Attention (gfx120x RDNA4 / gfx950 DUALWAVE_SWP / gfx942 generic).
 
     Args:
         q: Query tensor. Dense: ``[B, Sq, H, D]`` (BSHD).
@@ -1148,6 +1151,155 @@ def flydsl_flash_attn_func(
         ``[B, num_heads, max_seqlen_q]``, padded) holding the per-row
         natural-log, scale-folded log-sum-exp.
     """
+
+    # ── gfx120x / RDNA4 dense FA (bf16/fp16; FP8 via flydsl_flash_attn_fp8_func) ──
+    # Keep gfx950 dualwave / generic paths below unchanged for other arches.
+    _arch_early = _gpu_arch(q.device)
+    if _arch_early.startswith("gfx120"):
+        from kernels.attention.flash_attn_gfx120x_host import (
+            flydsl_flash_attn_func as _gfx120x_fa,
+        )
+
+        if q.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+            from kernels.attention.flash_attn_gfx120x_host import (
+                flydsl_flash_attn_fp8_func as _gfx120x_fp8,
+            )
+
+            return _gfx120x_fp8(
+                q,
+                k,
+                v,
+                causal=causal,
+                waves_per_eu=waves_per_eu,
+                daz=daz,
+                stream=stream,
+                q_descale=q_descale,
+                k_descale=k_descale,
+                v_descale=v_descale,
+                out=out,
+            )
+        if q.dtype == torch.int8:
+            # Dense int8 QKV (iu8 WMMA). Kitchen-packed int4 uses
+            # flydsl_flash_attn_iu4_func explicitly (packed last-dim ABI).
+            from kernels.attention.flash_attn_gfx120x_host import (
+                flydsl_flash_attn_int8_func as _gfx120x_i8,
+            )
+
+            return _gfx120x_i8(
+                q,
+                k,
+                v,
+                causal=causal,
+                waves_per_eu=waves_per_eu,
+                daz=daz,
+                stream=stream,
+                q_descale=q_descale,
+                k_descale=k_descale,
+                v_descale=v_descale,
+                out=out,
+            )
+        # Dense bf16/fp16 path. Unsupported interface features raise clearly
+        # gfx120x extensions: packed varlen / paged-KV / split-K / sink via
+        # dense FA + host gather/combine (flash_attn_gfx120x_ext).
+        from kernels.attention import flash_attn_gfx120x_ext as _g12x_ext
+
+        if cu_seqlens_q is not None or cu_seqlens_kv is not None:
+            if cu_seqlens_q is None or cu_seqlens_kv is None:
+                raise ValueError(
+                    "flydsl_flash_attn_func: gfx120x packed varlen requires both " "cu_seqlens_q and cu_seqlens_kv"
+                )
+            _max_q = max_seqlen_q
+            _max_kv = max_seqlen_kv
+            if _max_q is None or _max_kv is None:
+                _cq = cu_seqlens_q.to(torch.int64)
+                _ck = cu_seqlens_kv.to(torch.int64)
+                if _max_q is None:
+                    _max_q = int((_cq[1:] - _cq[:-1]).max().item())
+                if _max_kv is None:
+                    _max_kv = int((_ck[1:] - _ck[:-1]).max().item())
+            q_d, k_d, v_d, _, _ = _g12x_ext.packed_varlen_to_dense(
+                q, k, v, cu_seqlens_q, cu_seqlens_kv, int(_max_q), int(_max_kv)
+            )
+            o_d = _gfx120x_fa(
+                q_d,
+                k_d,
+                v_d,
+                causal=causal,
+                waves_per_eu=waves_per_eu,
+                daz=daz,
+                stream=stream,
+                bias=bias,
+                alibi_slopes=alibi_slopes,
+                return_lse=False,
+                out=None,
+            )
+            if sink is not None:
+                o_d = _g12x_ext.apply_attention_sink(o_d, q_d, k_d, sink, causal=causal)
+            return _g12x_ext.dense_to_packed_varlen(o_d, cu_seqlens_q)
+
+        if block_table is not None:
+            if seqlen_k is None:
+                raise ValueError("flydsl_flash_attn_func: gfx120x paged KV requires seqlen_k")
+            # Infer page_size from cache layout when not passed (linear: dim1).
+            _ps = int(k.shape[1]) if k.dim() == 4 else 64
+            _layout = kv_cache_layout or "linear"
+            k_d, v_d, _ = _g12x_ext.gather_paged_kv(
+                k,
+                v,
+                block_table,
+                seqlen_k,
+                page_size=_ps,
+                kv_cache_layout=_layout,
+            )
+            out_d = _gfx120x_fa(
+                q,
+                k_d,
+                v_d,
+                causal=causal,
+                waves_per_eu=waves_per_eu,
+                daz=daz,
+                stream=stream,
+                bias=bias,
+                alibi_slopes=alibi_slopes,
+                return_lse=False,
+                out=out,
+            )
+            if sink is not None:
+                out_d = _g12x_ext.apply_attention_sink(out_d, q, k_d, sink, causal=causal)
+            return out_d
+
+        if num_kv_splits is not None and int(num_kv_splits) > 1:
+            out_s = _g12x_ext.splitk_online_softmax_attn(
+                q, k, v, causal=causal, num_kv_splits=int(num_kv_splits), attn_mask=bias
+            )
+            if sink is not None:
+                out_s = _g12x_ext.apply_attention_sink(out_s, q, k, sink, causal=causal, attn_mask=bias)
+            if out is not None:
+                out.copy_(out_s)
+                return out
+            return out_s
+
+        out_dense = _gfx120x_fa(
+            q,
+            k,
+            v,
+            causal=causal,
+            waves_per_eu=waves_per_eu,
+            daz=daz,
+            stream=stream,
+            out=out,
+            attn_mask=bias,
+            bias=bias,
+            alibi_slopes=alibi_slopes,
+            return_lse=return_lse,
+        )
+        if sink is not None:
+            if return_lse:
+                out_dense, lse = out_dense
+            out_dense = _g12x_ext.apply_attention_sink(out_dense, q, k, sink, causal=causal, attn_mask=bias)
+            if return_lse:
+                return out_dense, lse
+        return out_dense
     # ── validation ──────────────────────────────────────────────────────────
     if not (q.is_cuda and k.is_cuda and v.is_cuda):
         raise ValueError("flydsl_flash_attn_func: q/k/v must be CUDA tensors")
@@ -1641,3 +1793,17 @@ def flydsl_flash_attn_func(
     if return_lse:
         return out, lse
     return out
+
+
+def flydsl_flash_attn_fp8_func(*args, **kwargs):
+    """FP8 Flash Attention. On gfx120x routes to the RDNA4 FP8 kernel; gfx950 uses dense fp8 path via ``flydsl_flash_attn_func``."""
+    # Prefer explicit gfx120x host when the first tensor is on gfx120x.
+    q = args[0] if args else kwargs.get("q")
+    if q is not None and _gpu_arch(q.device).startswith("gfx120"):
+        from kernels.attention.flash_attn_gfx120x_host import (
+            flydsl_flash_attn_fp8_func as _impl,
+        )
+
+        return _impl(*args, **kwargs)
+    # gfx950+ : reuse unified entry with fp8 dtypes.
+    return flydsl_flash_attn_func(*args, **kwargs)
