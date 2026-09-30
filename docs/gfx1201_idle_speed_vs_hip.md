@@ -1,74 +1,65 @@
-# gfx1201 idle Speed vs HIP policy
+# gfx1201 idle Speed vs HIP
 
+**Hardware:** AMD Radeon AI PRO R9700 (gfx1201)  
 **Date:** 2026-09-30 (America/Chicago)  
-**GPU:** AMD Radeon AI PRO R9700 (gfx1201)  
-**Evidence:** `04_lab/results/FULL_SUITE_IDLE_VS_HIP_2026-09-30.json`,
-`PARITY_CONFIRM_2026-09-30.json`, and `CONVROT_LEAN_2026-09-30.json`  
 **Credit:** dimitri91209 + Grokbot
 
-## Idle smoke methodology (one at a time)
+## Measurement
 
-Lab and tip refresh benches must use **one single smoke per process**:
+Idle Speed vs HIP uses FlyDSL Device timing (`do_bench`) as documented in
+[`docs/autotune_guide.md`](autotune_guide.md) (Device timing contract):
 
-1. Pick exactly one `(kernel, shape)`.
-2. Confirm GPU idle (Comfy stopped; busy ≈ 0).
-3. **Warm** ≥10 untimed launches of that path; `torch.cuda.synchronize()`.
-4. Time **HIP only** (CUDA/HIP events, median ≥25–40 reps); sync.
-5. Time **FlyDSL only** the same way; sync.
-6. Write the row (HIP µs, Fly µs, ×, verdict); **exit**.
-7. Next shape = **new process** — never loop shapes inside one invocation.
+- One process measures one `(kernel, case, backend)` with one tensor set.
+  HIP and Fly run in separate processes; compare ratios after both results exist.
+- Timer: `python/flydsl/autotune.py` `do_bench` — warmup, then ≤5 batches each
+  preceded by a GPU backlog (`torch.cuda._sleep`), CUDA-event window of N
+  launches, **median** of batch averages (ms→µs).
+- GEMM suite defaults: **warm=10, rep=50**.
+- Speedup = `HIP_µs / Fly_µs` (>1 ⇒ Fly faster).
+- Verdicts: **WIN** ≥ 1.05 · **PARITY** 0.95–1.05 (near tie) · **LOSE** < 0.95
+  (slower). PARITY and LOSE are distinct; both still ship.
 
-Do not batch shapes or tests per shape in one smoke run (I/O lag / cross-shape
-noise corrupts idle comparisons). Prefer event timers over wall clock. Log only
-after both backends for that shape are measured. Dual-launch sub-100 µs paths
-may also report backlog-event (see FlyDSL `docs/autotune_guide.md`).
+## Results (2026-09-30)
 
-## Multi-LoRA methodology
+| Op | Case | Shape | HIP µs | Fly µs | × | Verdict |
+|---|---|---|---:|---:|---:|---|
+| ab_gate | large | `[1024, 4096, 4096]` | 310.882 | 207.041 | 1.502 | WIN |
+| ab_gate | tiny | `[32, 128, 64]` | 11.468 | 6.356 | 1.804 | WIN |
+| adaln | flux77_ln | `[77, 3072]` | 14.080 | 4.436 | 3.174 | WIN |
+| convrot | simple64 | `[64, 64, 64, 64]` | 12.044 | 10.624 | 1.134 | WIN |
+| int8_ab_gated | large | `[1024, 4096, 4096]` | 336.278 | 213.665 | 1.574 | WIN |
+| int8_ab_gated | mid | `[256, 512, 512]` | 29.392 | 18.624 | 1.578 | WIN |
+| int8_ab_gated | tiny | `[32, 128, 64]` | 11.736 | 6.388 | 1.837 | WIN |
+| int8_full | large | `[1024, 4096, 4096]` | 343.266 | 228.405 | 1.503 | WIN |
+| int8_full | mid | `[128, 256, 512]` | 21.908 | 17.992 | 1.218 | WIN |
+| int8_full | tiny | `[64, 64, 64]` | 11.548 | 10.356 | 1.115 | WIN |
+| int8_full | wanish | `[1024, 5120, 5120]` | 409.823 | 422.924 | 0.969 | PARITY |
+| int8_rowwise | large | `[1024, 4096]` | 34.236 | 11.784 | 2.905 | WIN |
+| int8_rowwise | tiny | `[64, 256]` | 3.840 | 3.424 | 1.121 | WIN |
+| rms_qk | flux77 | `[1, 77, 24, 128]` | 10.352 | 6.636 | 1.560 | WIN |
+| rms_rope1 | small | `[1, 8, 4, 64]` | 4.516 | 3.744 | 1.206 | WIN |
+| rope_sh_qk | flux77 | `[1, 77, 24, 128]` | 8.608 | 5.332 | 1.614 | WIN |
+| scaled_mm_fp8_gated | mid | `[128, 512, 512]` | 16.708 | 6.836 | 2.444 | WIN |
+| scaled_mm_fp8_gated | tiny | `[32, 128, 64]` | 9.840 | 4.924 | 1.998 | WIN |
+| scaled_mm_fp8_gated | wanish | `[1024, 5120, 5120]` | 1137.267 | 286.498 | 3.970 | WIN |
+| scaled_mm | mid_fat | `[128, 256, 512]` | 15.316 | 11.636 | 1.316 | WIN |
+| scaled_mm | mid_suite | `[128, 512, 512]` | 16.908 | 12.680 | 1.333 | WIN |
+| scaled_mm | tiny_k128 | `[32, 128, 128]` | 10.104 | 9.332 | 1.083 | WIN |
+| scaled_mm | tiny_k64 | `[32, 128, 64]` | 10.024 | 9.232 | 1.086 | WIN |
+| scaled_mm | wanish | `[1024, 5120, 5120]` | 1143.343 | 1139.479 | 1.003 | PARITY |
+| stoch | tiny | `[64, 128]` | 3.716 | 3.436 | 1.081 | WIN |
+| w8a16_path_a | large | `[1024, 4096, 4096]` | 316.538 | 551.759 | 0.574 | LOSE |
+| w8a16_path_a | mid | `[256, 512, 512]` | 29.092 | 18.580 | 1.566 | WIN |
+| w8a16_path_a | tiny | `[32, 64, 64]` | 11.492 | 6.308 | 1.822 | WIN |
 
-There is no separate bf16/fp16 multi-LoRA GEMM kernel. The quantized base GEMM
-runs once; adapters remain small-rank host residuals in Comfy load order:
-`sum_i scale_i * (x @ A_i) @ B_i`. This preserves N=0 plain dispatch and
-unlimited N≥1 adapter ordering without dequant-merge into the base. A fused
-multi-residual device epilogue is an optimization follow-up only if measured
-host residuals lose idle; it is not required for the current shipped path.
+## Notes
 
-## Speed vs HIP: LOSER list (inform only)
-
-These idle parity/near-miss rows are **LOSER (inform only; still ships)**. No
-kernel or operation is removed because of them; optimize further. The ratios
-below are copied from existing lab JSON and are not claims of wins:
-
-| Operation / case | HIP µs | Fly µs | × | Status |
-|---|---:|---:|---:|---|
-| `stochastic_rounding_fp8` tiny (full suite) | 7.68 | 7.72 | 0.995× | LOSER (inform only; still ships) |
-| `stochastic_rounding_fp8` tiny (confirm) | 10.96 | 10.80 | 1.015× | LOSER (inform only; still ships) |
-| `scaled_mm_fp8` tiny | 26.081 | 25.32 | 1.030× | LOSER (inform only; still ships) |
-| `scaled_mm_fp8` wanish (full suite) | 1134.168 | 1132.087 | 1.002× | LOSER (inform only; still ships) |
-| `scaled_mm_fp8` wanish (confirm) | 1144.568 | 1134.529 | 1.009× | LOSER (inform only; still ships) |
-| `int8_linear` wanish | 343.002 | 333.762 | 1.028× | LOSER (inform only; still ships) |
-| `int8_linear_convrot` 64x64x64_G64, simple event | 22.92 | 23.48 | 0.976× | LOSER (inform only; still ships) |
-| `rms_rope1` small | — | — | 1.032× | LOSER (inform only; still ships) |
-| `adaln` flux77_ln | 19.6 | 18.72 | 1.047× | LOSER (inform only; still ships) |
-
-For the ConvRot row, the same lean report records backlog-event **1.471× WIN**
-on 64x64x64_G64; mid and large ConvRot shapes are WIN. Hot shapes for the
-other listed operations are also WIN.
-
-The one actual earlier removal is `int8_linear_fused` (+LoRA/multi), which is
-not re-added by this policy. That historical removal is distinct from the
-inform-only loser list above.
-
-
-## W8A16 Path A / int8_rowwise / AB gate (landed 2026-09-30)
-
-Additive tip surface (no Comfy hooks). Cite WORKER_REFERENCE.md / playbook §11.
-
-| Kernel | Path | Notes |
-|---|---|---|
-| `kernels/gemm/rdna4_w8a16_path_a.py` | A (ops-suite + iu8 tip) | bf16 WMMA; no iu8 atom; large LOSE → gate |
-| `kernels/quant/rdna4_quantize_int8_rowwise.py` | A + B | rcp scale match; idle WIN class historically |
-| `kernels/gemm/rdna4_int8_ab_gate.py` | host | M-floor then M×K; Path B needs tip B iu8 |
-
-**READY_FOR_SMOKE:** GPU worker owns idle one-smokes — see Desktop
-`04_lab/results/READY_FOR_SMOKE_W8A16_PATH_A_ROWWISE_AB_2026-09-30.md` (or
-`/tmp/flydsl_gap1_built/READY_FOR_SMOKE_…`). Do not invent ×; measure idle only.
+- **Summary:** n=28 · WIN=25 · PARITY=2 · LOSE=1.
+- **`w8a16_path_a` large:** outside Path A’s intended gate. Large shapes route to
+  Path B via `int8_ab_gated` (large WIN ×1.574 on this suite). Do not treat the
+  Path A large LOSE as a Path A failure.
+- **Ship policy:** no DROP without an explicit maintainer ask. Inform near-misses
+  (PARITY / LOSE); they still ship.
+- Multi-LoRA: quantized base GEMM once; adapters stay small-rank host residuals
+  (`sum_i scale_i * (x @ A_i) @ B_i`). No separate bf16/fp16 multi-LoRA GEMM.
+- `int8_linear_fused` is not in this PR (idle-lose historically).
