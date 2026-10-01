@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 FlyDSL Project Contributors
 
-"""High-level FlyDSL Flash Attention API for gfx950 / gfx942.
+"""High-level FlyDSL Flash Attention API for gfx950 / gfx942 / gfx120x.
+
+gfx120x routes dense bf16/fp16/fp8 to ``flash_attn_gfx120x_host`` (causal×cross,
+mask ranks, return_lse, uniform ALiBi). Paged/varlen/split-K/sink on gfx120x via dense FA + host ext gather/combine.
 
 Wraps ``flash_attn_generic.build_flash_attn_func_module`` (gfx942-compatible,
 dense self/cross-attention) and ``flash_attn_gfx950.build_flash_attn_dualwave_swp_module``
@@ -20,8 +23,6 @@ Key features vs calling build_* directly:
   (gfx950 DUALWAVE_SWP dualwave_swp_debug_lazy_counts=True path).
 """
 
-from __future__ import annotations
-
 import contextlib
 import functools
 from typing import Optional
@@ -39,7 +40,7 @@ from kernels.attention.flash_attn_utils import (
     dualwave_splitk_workspace_elems,
 )
 
-__all__ = ["flydsl_flash_attn_func", "dualwave_splitk_workspace_elems"]
+__all__ = ["flydsl_flash_attn_func", "flydsl_flash_attn_fp8_func", "dualwave_splitk_workspace_elems"]
 
 _DTYPE_MAP = {torch.bfloat16: "bf16", torch.float16: "f16", torch.float8_e4m3fn: "fp8"}
 
@@ -58,10 +59,8 @@ _DENSE_DUALWAVE_LARGE_BATCH = 8
 _DENSE_DUALWAVE_MIN_SEQ_LARGE_BATCH = 192
 _DENSE_M256_MIN_TOKENS = 4096
 
-
 def _fp8_rescale_threshold(seqlen_kv: int) -> float:
     return 6.0 if seqlen_kv <= _FP8_LONG_SEQ else 4.0
-
 
 _FP8_AUTOSPLIT_MIN_TILES = 16
 _FP8_AUTOSPLIT_MAX_WS_BYTES = 1 << 30
@@ -72,7 +71,6 @@ _FP8_AUTOSPLIT_CAUSAL_SKEW = 0.75
 _FP8_AUTOSPLIT_DENSE_MARGIN = 0.85
 _FP8_NARROW_MAX_KV_TILES = 48
 
-
 def _fp8_auto_block_m(batch: int, num_heads: int, seqlen_q: int, seqlen_kv: int, causal: bool, num_cu: int) -> int:
     """Pick BLOCK_M (256 wide / 128 narrow) for an fp8 shape."""
     kv_tiles = -(-seqlen_kv // _FP8_BLOCK_N)
@@ -81,7 +79,6 @@ def _fp8_auto_block_m(batch: int, num_heads: int, seqlen_q: int, seqlen_kv: int,
     narrow = DUALWAVE_SWP_BLOCK_M // 2
     narrow_wgs = num_heads * -(-seqlen_q // narrow) * batch
     return narrow if narrow_wgs <= num_cu else DUALWAVE_SWP_BLOCK_M
-
 
 def _fp8_auto_kv_splits(
     batch: int,
@@ -121,13 +118,11 @@ def _fp8_auto_kv_splits(
         return 1
     return best if makespan(best) <= _FP8_AUTOSPLIT_DENSE_MARGIN * makespan(1) else 1
 
-
 def _dtype_str(t: torch.Tensor) -> str:
     s = _DTYPE_MAP.get(t.dtype)
     if s is None:
         raise ValueError(f"flydsl_flash_attn_func only supports bf16/f16/fp8, got {t.dtype!r}")
     return s
-
 
 @functools.lru_cache(maxsize=16)
 def _gpu_arch(device: torch.device) -> str:
@@ -136,19 +131,16 @@ def _gpu_arch(device: torch.device) -> str:
     except Exception:
         return ""
 
-
 def _dense_routes_to_dualwave(batch: int, seq_len: int) -> bool:
     if batch >= _DENSE_DUALWAVE_LARGE_BATCH:
         return seq_len >= _DENSE_DUALWAVE_MIN_SEQ_LARGE_BATCH
     return seq_len >= _DENSE_DUALWAVE_MIN_SEQ
-
 
 def _dense_light_cu(device: torch.device) -> int:
     try:
         return int(torch.cuda.get_device_properties(device.index).multi_processor_count)
     except Exception:
         return _DENSE_LIGHT_CU_FALLBACK
-
 
 def _dense_generic_tile(batch: int, seq_len: int, num_heads: int, head_dim: int, dtype_str: str, device: torch.device):
     if head_dim in (64, 128) and dtype_str in ("bf16", "f16"):
@@ -159,9 +151,7 @@ def _dense_generic_tile(batch: int, seq_len: int, num_heads: int, head_dim: int,
         return 256, 512, "auto"
     return 128, 256, "auto"
 
-
 # ── build-cache helpers ────────────────────────────────────────────────────
-
 
 @functools.lru_cache(maxsize=256)
 def _build_dense(
@@ -195,7 +185,6 @@ def _build_dense(
         daz=daz,
         return_lse=return_lse,
     )
-
 
 @functools.lru_cache(maxsize=256)
 def _build_dense_dualwave(
@@ -240,16 +229,13 @@ def _build_dense_dualwave(
         _xcd_swizzle=xcd_swizzle,
     )
 
-
 _FP8_BATCH_INTERLEAVE_GROUP = 2
-
 
 def _fp8_batch_interleave_group(batch: int, causal: bool, cross: bool, num_kv_splits: int) -> int:
     if not causal or cross or num_kv_splits > 1:
         return 1
     g = _FP8_BATCH_INTERLEAVE_GROUP
     return g if batch % g == 0 else 1
-
 
 @functools.lru_cache(maxsize=128)
 def _build_dense_fp8(
@@ -293,7 +279,6 @@ def _build_dense_fp8(
         batch_interleave_group=batch_interleave_group,
     )
 
-
 @functools.lru_cache(maxsize=256)
 def _build_varlen(
     num_heads: int,
@@ -336,7 +321,6 @@ def _build_varlen(
         has_sink=has_sink,
     )
 
-
 @functools.lru_cache(maxsize=256)
 def _build_varlen_light(
     num_heads: int,
@@ -370,7 +354,6 @@ def _build_varlen_light(
         daz=daz,
         return_lse=return_lse,
     )
-
 
 @functools.lru_cache(maxsize=256)
 def _build_splitk(
@@ -410,7 +393,6 @@ def _build_splitk(
         has_alibi=has_alibi,
         has_sink=has_sink,
     )
-
 
 @functools.lru_cache(maxsize=256)
 def _build_paged(
@@ -466,7 +448,6 @@ def _build_paged(
         has_bias=has_bias,
     )
 
-
 @functools.lru_cache(maxsize=64)
 def _build_paged_fp8(
     num_heads: int,
@@ -506,7 +487,6 @@ def _build_paged_fp8(
         cache_buffered=cache_buffered,
     )
 
-
 # ── paged-KV native path ────────────────────────────────────────────────────
 
 # Native page geometry and batch-interleave limits.
@@ -514,7 +494,6 @@ _PAGED_PAGE_SIZE = 64
 _PAGED_BT_LDS_SIZE = 2048
 _PAGED_FP8_BATCH_INTERLEAVE_MAX_GROUP = 8
 _PAGED_FP8_V192_BATCH_INTERLEAVE_MAX_BATCH = 16
-
 
 def _paged_fp8_batch_interleave_group(batch_size: int, head_dims: tuple[int, int], *, paired: bool = False) -> int:
     """Choose a batch divisor for the generic or paired-page schedule."""
@@ -531,7 +510,6 @@ def _paged_fp8_batch_interleave_group(batch_size: int, head_dims: tuple[int, int
         if batch_size % group_size == 0:
             return group_size
     return 1
-
 
 def _flydsl_flash_attn_paged(
     q: torch.Tensor,
@@ -930,7 +908,6 @@ def _flydsl_flash_attn_paged(
 
     return out
 
-
 @functools.lru_cache(maxsize=256)
 def _build_paged_light(
     num_heads: int,
@@ -970,9 +947,7 @@ def _build_paged_light(
         return_lse=return_lse,
     )
 
-
 # ── public API ─────────────────────────────────────────────────────────────
-
 
 def flydsl_flash_attn_func(
     q: torch.Tensor,
@@ -1003,6 +978,8 @@ def flydsl_flash_attn_func(
     # Additive attention bias, folded into the scores after sm_scale and before
     # masking. gfx950 DUALWAVE_SWP only (dense / varlen / split-K / paged KV).
     bias: Optional[torch.Tensor] = None,
+    # Comfy/SDPA alias for additive mask; merged with bias (either may be set).
+    attn_mask: Optional[torch.Tensor] = None,
     # Per-head ALiBi slope table, computed analytically into the scores. Same
     # path as `bias` but no paged-KV support; may be combined with `bias`.
     alibi_slopes: Optional[torch.Tensor] = None,
@@ -1034,7 +1011,7 @@ def flydsl_flash_attn_func(
     # CUDA/HIP stream; defaults to the current stream for q.device.
     stream: Optional[torch.cuda.Stream] = None,
 ) -> torch.Tensor:
-    """Run FlyDSL Flash Attention (gfx950 DUALWAVE_SWP / gfx942 generic fallback).
+    """Run FlyDSL Flash Attention (gfx120x RDNA4 / gfx950 DUALWAVE_SWP / gfx942 generic).
 
     Args:
         q: Query tensor. Dense: ``[B, Sq, H, D]`` (BSHD).
@@ -1148,6 +1125,164 @@ def flydsl_flash_attn_func(
         ``[B, num_heads, max_seqlen_q]``, padded) holding the per-row
         natural-log, scale-folded log-sum-exp.
     """
+
+    # Comfy/SDPA callers pass attn_mask; gfx950 path uses bias. Prefer attn_mask when set.
+    if attn_mask is not None:
+        if bias is not None and bias is not attn_mask:
+            raise ValueError(
+                "flydsl_flash_attn_func: pass only one of attn_mask or bias "
+                "(Comfy alias); both were set to different tensors"
+            )
+        bias = attn_mask
+
+    # ── gfx120x / RDNA4 dense FA (bf16/fp16; FP8 via flydsl_flash_attn_fp8_func) ──
+    # Keep gfx950 dualwave / generic paths below unchanged for other arches.
+    _arch_early = _gpu_arch(q.device)
+    if _arch_early.startswith("gfx120"):
+        from kernels.attention.flash_attn_gfx120x_host import (
+            flydsl_flash_attn_func as _gfx120x_fa,
+        )
+
+        if q.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+            from kernels.attention.flash_attn_gfx120x_host import (
+                flydsl_flash_attn_fp8_func as _gfx120x_fp8,
+            )
+
+            return _gfx120x_fp8(
+                q,
+                k,
+                v,
+                causal=causal,
+                waves_per_eu=waves_per_eu,
+                daz=daz,
+                stream=stream,
+                q_descale=q_descale,
+                k_descale=k_descale,
+                v_descale=v_descale,
+                out=out,
+            )
+        if q.dtype == torch.int8:
+            # Dense int8 QKV (iu8 WMMA). Nibble-packed int4 uses
+            # flydsl_flash_attn_iu4_func explicitly (packed last-dim ABI).
+            from kernels.attention.flash_attn_gfx120x_host import (
+                flydsl_flash_attn_int8_func as _gfx120x_i8,
+            )
+
+            return _gfx120x_i8(
+                q,
+                k,
+                v,
+                causal=causal,
+                waves_per_eu=waves_per_eu,
+                daz=daz,
+                stream=stream,
+                q_descale=q_descale,
+                k_descale=k_descale,
+                v_descale=v_descale,
+                out=out,
+            )
+        # Dense bf16/fp16 path. Unsupported interface features raise clearly
+        # gfx120x extensions: packed varlen / paged-KV / split-K / sink via
+        # dense FA + host gather/combine (flash_attn_gfx120x_ext).
+        from kernels.attention import flash_attn_gfx120x_ext as _g12x_ext
+
+        if cu_seqlens_q is not None or cu_seqlens_kv is not None:
+            if cu_seqlens_q is None or cu_seqlens_kv is None:
+                raise ValueError(
+                    "flydsl_flash_attn_func: gfx120x packed varlen requires both " "cu_seqlens_q and cu_seqlens_kv"
+                )
+            _max_q = max_seqlen_q
+            _max_kv = max_seqlen_kv
+            if _max_q is None or _max_kv is None:
+                _cq = cu_seqlens_q.to(torch.int64)
+                _ck = cu_seqlens_kv.to(torch.int64)
+                if _max_q is None:
+                    _max_q = int((_cq[1:] - _cq[:-1]).max().item())
+                if _max_kv is None:
+                    _max_kv = int((_ck[1:] - _ck[:-1]).max().item())
+            q_d, k_d, v_d, _, _ = _g12x_ext.packed_varlen_to_dense(
+                q, k, v, cu_seqlens_q, cu_seqlens_kv, int(_max_q), int(_max_kv)
+            )
+            o_d = _gfx120x_fa(
+                q_d,
+                k_d,
+                v_d,
+                causal=causal,
+                waves_per_eu=waves_per_eu,
+                daz=daz,
+                stream=stream,
+                bias=bias,
+                alibi_slopes=alibi_slopes,
+                return_lse=False,
+                out=None,
+            )
+            if sink is not None:
+                o_d = _g12x_ext.apply_attention_sink(o_d, q_d, k_d, sink, causal=causal)
+            return _g12x_ext.dense_to_packed_varlen(o_d, cu_seqlens_q)
+
+        if block_table is not None:
+            if seqlen_k is None:
+                raise ValueError("flydsl_flash_attn_func: gfx120x paged KV requires seqlen_k")
+            # Infer page_size from cache layout when not passed (linear: dim1).
+            _ps = int(k.shape[1]) if k.dim() == 4 else 64
+            _layout = kv_cache_layout or "linear"
+            k_d, v_d, _ = _g12x_ext.gather_paged_kv(
+                k,
+                v,
+                block_table,
+                seqlen_k,
+                page_size=_ps,
+                kv_cache_layout=_layout,
+            )
+            out_d = _gfx120x_fa(
+                q,
+                k_d,
+                v_d,
+                causal=causal,
+                waves_per_eu=waves_per_eu,
+                daz=daz,
+                stream=stream,
+                bias=bias,
+                alibi_slopes=alibi_slopes,
+                return_lse=False,
+                out=out,
+            )
+            if sink is not None:
+                out_d = _g12x_ext.apply_attention_sink(out_d, q, k_d, sink, causal=causal)
+            return out_d
+
+        if num_kv_splits is not None and int(num_kv_splits) > 1:
+            out_s = _g12x_ext.splitk_online_softmax_attn(
+                q, k, v, causal=causal, num_kv_splits=int(num_kv_splits), attn_mask=bias
+            )
+            if sink is not None:
+                out_s = _g12x_ext.apply_attention_sink(out_s, q, k, sink, causal=causal, attn_mask=bias)
+            if out is not None:
+                out.copy_(out_s)
+                return out
+            return out_s
+
+        out_dense = _gfx120x_fa(
+            q,
+            k,
+            v,
+            causal=causal,
+            waves_per_eu=waves_per_eu,
+            daz=daz,
+            stream=stream,
+            out=out,
+            attn_mask=bias,
+            bias=bias,
+            alibi_slopes=alibi_slopes,
+            return_lse=return_lse,
+        )
+        if sink is not None:
+            if return_lse:
+                out_dense, lse = out_dense
+            out_dense = _g12x_ext.apply_attention_sink(out_dense, q, k, sink, causal=causal, attn_mask=bias)
+            if return_lse:
+                return out_dense, lse
+        return out_dense
     # ── validation ──────────────────────────────────────────────────────────
     if not (q.is_cuda and k.is_cuda and v.is_cuda):
         raise ValueError("flydsl_flash_attn_func: q/k/v must be CUDA tensors")
@@ -1641,3 +1776,16 @@ def flydsl_flash_attn_func(
     if return_lse:
         return out, lse
     return out
+
+def flydsl_flash_attn_fp8_func(*args, **kwargs):
+    """FP8 Flash Attention. On gfx120x routes to the RDNA4 FP8 kernel; gfx950 uses dense fp8 path via ``flydsl_flash_attn_func``."""
+    # Prefer explicit gfx120x host when the first tensor is on gfx120x.
+    q = args[0] if args else kwargs.get("q")
+    if q is not None and _gpu_arch(q.device).startswith("gfx120"):
+        from kernels.attention.flash_attn_gfx120x_host import (
+            flydsl_flash_attn_fp8_func as _impl,
+        )
+
+        return _impl(*args, **kwargs)
+    # gfx950+ : reuse unified entry with fp8 dtypes.
+    return flydsl_flash_attn_func(*args, **kwargs)

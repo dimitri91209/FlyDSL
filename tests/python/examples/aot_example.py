@@ -20,7 +20,7 @@ Usage:
 
 Environment variables:
     FLYDSL_RUNTIME_CACHE_DIR  Cache directory (default: ~/.flydsl/cache)
-    ARCH                      Target GPU architecture (e.g. gfx942, gfx950).
+    ARCH                      Target GPU architecture (e.g. gfx942, gfx950, gfx120x / gfx1201).
 """
 
 import argparse

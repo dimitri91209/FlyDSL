@@ -116,24 +116,46 @@ def get_warp_size(arch: Optional[str] = None) -> int:
 
 
 # LDS bytes available per CU / WGP, keyed by architecture.
+# gfx120x family (RDNA4: gfx1200/gfx1201/gfx1202/…) shares 64 KiB LDS.
+_SMEM_GFX120X = 65536
 SMEM_CAPACITY_MAP = {
     "gfx942": 65536,
     "gfx950": 163840,
     "gfx1100": 65536,
     "gfx1151": 65536,
-    "gfx1201": 65536,
+    "gfx1200": _SMEM_GFX120X,
+    "gfx1201": _SMEM_GFX120X,
+    "gfx1202": _SMEM_GFX120X,
+    "gfx120x": _SMEM_GFX120X,
     "gfx1250": 327680,
 }
+
+
+def _smem_capacity_for_arch(arch: str):
+    """Return LDS capacity for ``arch``, or None if unknown.
+
+    Exact map keys win; otherwise gfx120x family uses the shared 64 KiB value
+    so gfx1200/gfx1202/… are not skipped when only a chip prefix is known.
+    """
+    if not arch:
+        return None
+    key = arch.lower().split(":")[0]
+    if key in SMEM_CAPACITY_MAP:
+        return SMEM_CAPACITY_MAP[key]
+    if key.startswith("gfx120"):
+        return _SMEM_GFX120X
+    return None
 
 
 def check_smem_capacity(allocated_bytes: int, arch: str = None):
     """Raise if the requested shared-memory bytes exceed the device LDS capacity.
 
-    The check is skipped when ``arch`` is None or not in the capacity map.
+    The check is skipped when ``arch`` is None or not in the capacity map /
+    gfx120x family fallback.
     """
     if arch is None:
         return
-    limit = SMEM_CAPACITY_MAP.get(arch)
+    limit = _smem_capacity_for_arch(arch)
     if limit is not None and allocated_bytes > limit:
         raise RuntimeError(
             f"Shared Memory Overflow: Requested {allocated_bytes} bytes, " f"but device {arch} limit is {limit} bytes."
