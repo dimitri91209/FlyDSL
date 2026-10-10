@@ -2,7 +2,7 @@
 
 These calls live in the `kernels/` tree of a source checkout. They are not installed by the `flydsl` wheel. A host imports them by the dotted name below.
 
-Every launch calls `kernels.common.gfx120x_arch.require_gfx120x`. That reads `get_rocm_arch()` and raises unless the name starts with `gfx120`. `gfx1250` does not match.
+A gfx120x launch we added calls `kernels.common.gfx120x_arch.require_gfx120x`. That reads `get_rocm_arch()` and raises unless the name starts with `gfx120`. `gfx1250` does not match. `kernels.gemm.rdna_f16_gemm`, `kernels.gemm.rdna_fp8_preshuffle_gemm`, and `kernels.quant.rdna4_int4_codec` do not call it. The first two are the kernels from `main`. The codec is ordinary Python.
 
 The list is every function another module can import. A name that starts with `_`, and a function defined inside another function, are left out.
 
@@ -100,7 +100,7 @@ A matrix multiply writes `C = A @ B.T`. Wider numbers come first. bf16 and fp16 
 | --- | --- |
 | `kernels.gemm.rdna4_tile.TileConfig` | WMMA launch tile. ``threads`` is the block size. ``name`` is the tile label. |
 | `kernels.gemm.rdna4_tile.TileConfig.threads` | Threads in the block: warps_m * warps_n * 32. |
-| `kernels.gemm.rdna4_tile.TileConfig.name` | Tile label, for logs and the autotune table. |
+| `kernels.gemm.rdna4_tile.TileConfig.name` | Tile label, such as `128x128x64_w2x2_t1x1`. |
 
 ## MLP
 
@@ -358,7 +358,7 @@ Turn a float tensor into a smaller code, or turn a packed code back into a value
 
 | Call | What it does |
 | --- | --- |
-| `kernels.quant.rdna4_awq_w4a16.pick_awq_gemv_tiles` | Return ``(max_m, n_tile, block_threads)`` for fused AWQ GEMV (measured). |
+| `kernels.quant.rdna4_awq_w4a16.pick_awq_gemv_tiles` | Return `(max_m, n_tile, block_threads)` for the fused AWQ GEMV. |
 | `kernels.quant.rdna4_awq_w4a16.unpack_uint4_row_major` | (..., K//2) int8 → (..., K) int8 in [0, 15]. |
 | `kernels.quant.rdna4_awq_w4a16.build_awq_dequant_w4a16_module` | Unpack AWQ uint4 + apply group scales/zeros → bf16/fp16 weight row. |
 | `kernels.quant.rdna4_awq_w4a16.awq_dequant_direct` | Internal helper. |
@@ -371,7 +371,7 @@ Turn a float tensor into a smaller code, or turn a packed code back into a value
 
 | Call | What it does |
 | --- | --- |
-| `kernels.quant.rdna4_svdquant_w4a4.pick_svdquant_n_tile` | Measured gfx1201 N-tile for fused SVDQuant (2026-09-30). |
+| `kernels.quant.rdna4_svdquant_w4a4.pick_svdquant_n_tile` | Pick the N tile for the fused SVDQuant kernel from M and N. |
 | `kernels.quant.rdna4_svdquant_w4a4.build_svdquant_dequant_w4_module` | Unpack signed INT4 + apply group scales → bf16/fp16 weight row. |
 | `kernels.quant.rdna4_svdquant_w4a4.svdquant_dequant_direct` | Internal helper. |
 | `kernels.quant.rdna4_svdquant_w4a4.dequant_svdquant_w4a4_weight` | FlyDSL SVDQuant W4 weight dequant → bf16/fp16 ``(N, K)``. |
