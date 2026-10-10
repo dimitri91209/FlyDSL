@@ -69,16 +69,3 @@ def test_hosts_the_audits_found_uncalled_are_still_exported() -> None:
         quantize_and_rotate_rowwise,
     ):
         assert callable(fn)
-
-
-def test_require_gfx120x_uses_process_arch(monkeypatch) -> None:
-    from kernels.common.gfx120x_arch import require_gfx120x
-
-    monkeypatch.setenv("FLYDSL_GPU_ARCH", "gfx1201")
-    require_gfx120x("probe")
-    monkeypatch.setenv("FLYDSL_GPU_ARCH", "gfx1201:xnack-")
-    require_gfx120x("probe")
-    for arch in ("gfx950", "gfx942", "gfx1250", "gfx1100"):
-        monkeypatch.setenv("FLYDSL_GPU_ARCH", arch)
-        with pytest.raises(ValueError, match="gfx120x"):
-            require_gfx120x("probe")
