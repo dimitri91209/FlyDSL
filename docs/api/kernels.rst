@@ -93,4 +93,4 @@ Utilities
 - ``kernels.common.gfx120x_pad`` -- gfx120x pad (``device_pad``)
 - ``kernels.common.gfx120x_row_bias`` -- gfx120x row bias (``add_row_bias``, ``add_same``, ``mul_by_scale1``)
 
-.. seealso:: :doc:`../prebuilt_kernels_guide` for detailed usage and configuration of each kernel.
+.. seealso:: :doc:`../prebuilt_kernels_guide` for usage, and :doc:`../rdna4_functions_guide` for every gfx120x function.
