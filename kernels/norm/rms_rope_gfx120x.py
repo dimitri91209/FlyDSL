@@ -24,20 +24,14 @@ from kernels.common.gfx120x_buf_helpers import kernel_signature
 
 KERNEL_NAME = "rms_rope_gfx120x"
 WARP = 32
-
-
-def _block_threads(hd: int) -> int:
-    """Measured gfx1201 BT gate (2026-09-30) — see gfx120x_autotune_tables."""
-    from kernels.common.gfx120x_autotune_tables import pick_rms_rope_block_threads
-
-    return pick_rms_rope_block_threads(hd)
+BLOCK_THREADS = 256
 
 
 @lru_cache(maxsize=64)
 def build_rms_rope_module(HD: int, dtype_str: str, block_threads: Optional[int] = None) -> Callable[..., None]:
     """Build the RMSNorm-then-RoPE kernel for one tensor."""
     if block_threads is None:
-        block_threads = _block_threads(HD)
+        block_threads = BLOCK_THREADS
     sig = kernel_signature(hd=HD, dtype=dtype_str, block=block_threads, op="rms_rope")
     elem_dtype, elem_bits = {
         "float32": (fx.Float32, 32),
@@ -202,7 +196,7 @@ def build_rms_rope_module(HD: int, dtype_str: str, block_threads: Optional[int] 
 def build_rms_rope_split_module(HD: int, dtype_str: str, block_threads: Optional[int] = None) -> Callable[..., None]:
     """Build RMSNorm-then-RoPE with split-half rotary pairs."""
     if block_threads is None:
-        block_threads = _block_threads(HD)
+        block_threads = BLOCK_THREADS
     sig = kernel_signature(hd=HD, dtype=dtype_str, block=block_threads, op="rms_rope_split")
     elem_dtype, elem_bits = {
         "float32": (fx.Float32, 32),
@@ -393,7 +387,7 @@ def build_rms_rope_split_module(HD: int, dtype_str: str, block_threads: Optional
 def build_rms_rope_qk_fused_module(HD: int, dtype_str: str, block_threads: Optional[int] = None) -> Callable[..., None]:
     """Build RMSNorm-then-RoPE for Q and K in one launch."""
     if block_threads is None:
-        block_threads = _block_threads(HD)
+        block_threads = BLOCK_THREADS
     sig = kernel_signature(hd=HD, dtype=dtype_str, block=block_threads, op="rms_rope_qk")
     elem_dtype, elem_bits = {
         "float32": (fx.Float32, 32),
@@ -577,7 +571,7 @@ def build_rms_rope_split_qk_fused_module(
     """Q then K in one block — reuse LDS norm+red, shared freqs."""
 
     if block_threads is None:
-        block_threads = _block_threads(HD)
+        block_threads = BLOCK_THREADS
     sig = kernel_signature(hd=HD, dtype=dtype_str, block=block_threads, op="rms_rope_sh_qk")
     elem_dtype, elem_bits = {
         "float32": (fx.Float32, 32),

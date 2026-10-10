@@ -22,7 +22,7 @@ from kernels.quant.rdna4_int8_convrot import (  # noqa: E402
     int8_linear_convrot,
     quantize_int8_convrot_weight,
 )
-from tests.kernels.oracles.rdna4_int8_convrot_oracle import (  # noqa: E402
+from tests.kernels.oracles import (  # noqa: E402
     reference_dequantize_int8_convrot_weight,
     reference_quantize_int8_convrot_weight,
 )

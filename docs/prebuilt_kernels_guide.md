@@ -414,7 +414,7 @@ Wave32 WMMA. These calls are for gfx120x. The sections above are unchanged.
 | SiLU / SwiGLU | `kernels/common/gfx120x_swiglu.py` |
 | Capability query | `kernels/common/gfx120x_capabilities.py` (`available_for_arch`, then `resolve`) |
 
-`rocdl.SWMMAC` is an atom. No kernel calls it. Shared helpers: `kernels/common/gfx120x_arch.py`, `gfx120x_buf_helpers.py`, `gfx120x_pad.py`, `gfx120x_row_bias.py`, `gfx120x_autotune_tables.py`, `kernels/gemm/rdna4_tile.py`.
+`rocdl.SWMMAC` is an atom. No kernel calls it. Shared helpers: `kernels/common/gfx120x_arch.py`, `gfx120x_buf_helpers.py`, `gfx120x_pad.py`, `gfx120x_row_bias.py`, `kernels/gemm/rdna4_tile.py`.
 
 ## 4. Shared utilities
 
@@ -563,7 +563,6 @@ What operation do you need?
 | `kernels/quant/rdna4_svdquant_w4a4.py` | gfx120x SVDQuant W4A4 |
 | `kernels/quant/rdna4_int4_codec.py` | gfx120x int4 pack |
 | `kernels/common/gfx120x_arch.py` | gfx120x arch check |
-| `kernels/common/gfx120x_autotune_tables.py` | gfx120x block-size tables |
 | `kernels/common/gfx120x_buf_helpers.py` | gfx120x buffer helpers |
 | `kernels/common/gfx120x_pad.py` | gfx120x pad |
 | `kernels/common/gfx120x_row_bias.py` | gfx120x row bias |

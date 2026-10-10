@@ -8,8 +8,8 @@ Fuses RMS or LayerNorm with affine modulation from a conditioning vector
 * ``subtract_mean=True`` -- LayerNorm AdaLN (center then scale)
 * ``subtract_mean=False`` -- RMS AdaLN (scale only)
 
-Block thread count grows with hidden size N (256 / 512 / 1024). This module
-is FlyDSL-native; call the builders here directly (no third-party attention/norm package).
+The block is 256 threads. Lanes past N do not load. This module is
+FlyDSL-native; call the builders here directly (no third-party attention/norm package).
 """
 
 import math
@@ -25,13 +25,7 @@ from kernels.common.gfx120x_buf_helpers import kernel_signature
 
 KERNEL_NAME = "adaln_gfx120x"
 WARP = 32
-
-
-def _block_threads(n: int) -> int:
-    """Measured gfx1201 BT gate (2026-09-30) — see gfx120x_autotune_tables."""
-    from kernels.common.gfx120x_autotune_tables import pick_adaln_block_threads
-
-    return pick_adaln_block_threads(n)
+BLOCK_THREADS = 256
 
 
 @lru_cache(maxsize=64)
@@ -41,7 +35,7 @@ def build_adaln_module(
     """Specialize fused AdaLN kernel on (N, dtype, subtract_mean)."""
 
     if block_threads is None:
-        block_threads = _block_threads(N)
+        block_threads = BLOCK_THREADS
     sig = kernel_signature(
         n=N,
         dtype=dtype_str,

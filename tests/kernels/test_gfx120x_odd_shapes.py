@@ -153,7 +153,7 @@ def test_convrot_odd_k_stays_in_kernel(k: int) -> None:
 @pytest.mark.parametrize("k,ffn", [(8, 8), (12, 16), (16, 12)])
 def test_fused_swiglu_odd_ffn_or_k(k: int, ffn: int) -> None:
     """Short K or FFN stays in the LDS kernel and matches the eager SwiGLU."""
-    from tests.kernels.oracles.rdna4_fused_mlp_nmajor_oracle import reference_swiglu_mlp
+    from tests.kernels.oracles import reference_swiglu_mlp
 
     m = 16
     x = torch.randn(m, k, device="cuda", dtype=torch.bfloat16)
@@ -194,18 +194,13 @@ def _check(name: str, out: torch.Tensor, ref: torch.Tensor, floor: float) -> Non
 
 
 def test_autotune_boundary_shapes() -> None:
-    """Shapes on the measured block-size and tile boundaries, not the 64/128 tiles.
+    """Shapes that are not the 64 or 128 tiles.
 
-    Block sizes come from ``gfx120x_autotune_tables`` when the host is called
-    without an override. Each section names itself if it fails.
+    Hosts use a fixed 256-thread block. The kernel masks lanes past the real
+    size. Each section names itself if it fails.
     """
     import flydsl.compiler as flyc
     from flydsl.compiler.jit_argument import PointerJitArg
-    from kernels.common.gfx120x_autotune_tables import (
-        pick_adaln_block_threads,
-        pick_rms_rope_block_threads,
-        pick_rope_block_threads,
-    )
     from kernels.gemm.rdna4_int8_linear import int8_linear
     from kernels.gemm.rdna4_mxfp8_block_gemm import mxfp8_block_gemm
     from kernels.norm.adaln_gfx120x import build_adaln_module
@@ -214,7 +209,7 @@ def test_autotune_boundary_shapes() -> None:
     from kernels.quant.rdna4_fp8_quant import dequantize_fp8, fp8_quant_direct
     from kernels.quant.rdna4_mxfp8_e8m0 import dequantize_mxfp8_device, quantize_mxfp8_device
     from kernels.quant.rdna4_quantize_int8_rowwise import dequantize_int8_rowwise, quantize_int8_rowwise
-    from tests.kernels.oracles.rdna4_fused_mlp_nmajor_oracle import reference_swiglu_mlp
+    from tests.kernels.oracles import reference_swiglu_mlp
 
     def _ptr(t: torch.Tensor) -> PointerJitArg:
         import flydsl.expr as fx
@@ -232,7 +227,6 @@ def test_autotune_boundary_shapes() -> None:
 
     def adaln(n: int) -> None:
         rows = 3
-        assert pick_adaln_block_threads(n) in (32, 256, 512, 128, 1024)
         x = torch.randn(rows, n, device="cuda", dtype=torch.bfloat16)
         scale = torch.randn(rows, n, device="cuda", dtype=torch.bfloat16) * 0.1
         shift = torch.randn(rows, n, device="cuda", dtype=torch.bfloat16) * 0.1
@@ -248,7 +242,6 @@ def test_autotune_boundary_shapes() -> None:
 
     def rms(hd: int) -> None:
         rows = 3
-        assert pick_rms_rope_block_threads(hd) == 64
         x = torch.randn(rows, hd, device="cuda", dtype=torch.bfloat16)
         scale = torch.randn(hd, device="cuda", dtype=torch.bfloat16)
         pairs = hd // 2
@@ -269,7 +262,6 @@ def test_autotune_boundary_shapes() -> None:
     def rope(hd: int, rows: int) -> None:
         pairs = hd // 2
         n_pairs = rows * pairs
-        assert pick_rope_block_threads(n_pairs) == 256
         x = torch.randn(rows, hd, device="cuda", dtype=torch.bfloat16)
         freqs = torch.randn(rows, pairs, 2, 2, device="cuda", dtype=torch.float32)
         out = torch.empty_like(x)

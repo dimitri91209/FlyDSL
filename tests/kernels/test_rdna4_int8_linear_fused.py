@@ -21,7 +21,7 @@ from kernels.gemm.rdna4_int8_linear_fused import (  # noqa: E402
     int8_linear_fused,
     int8_linear_fused_multi,
 )
-from tests.kernels.oracles.rdna4_int8_linear_fused_oracle import (  # noqa: E402
+from tests.kernels.oracles import (  # noqa: E402
     reference_int8_linear_fused,
     reference_int8_linear_fused_multi,
 )

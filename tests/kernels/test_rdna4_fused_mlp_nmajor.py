@@ -15,9 +15,7 @@ from kernels.gemm.rdna4_fused_mlp_nmajor import (
     gemm_bf16_nmajor_lds,
     pick_nmajor_lds_tile,
 )
-from tests.kernels.oracles.rdna4_fused_mlp_nmajor_oracle import (
-    reference_swiglu_mlp,
-)
+from tests.kernels.oracles import reference_swiglu_mlp
 
 pytestmark = [pytest.mark.l2_device, pytest.mark.rocm_lower]
 

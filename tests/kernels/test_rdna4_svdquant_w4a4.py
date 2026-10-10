@@ -27,7 +27,7 @@ from kernels.quant.rdna4_svdquant_w4a4 import (  # noqa: E402
     scaled_mm_svdquant_w4a4,
     svdquant_w4a4_linear,
 )
-from tests.kernels.oracles.rdna4_svdquant_w4a4_oracle import (  # noqa: E402
+from tests.kernels.oracles import (  # noqa: E402
     reference_dequant_svdquant_w4a4_weight,
     reference_scaled_mm_svdquant_w4a4,
 )

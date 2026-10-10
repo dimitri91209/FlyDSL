@@ -21,9 +21,7 @@ from kernels.quant.rdna4_awq_w4a16 import (  # noqa: E402
     gemv_awq_w4a16,
     unpack_uint4_row_major,
 )
-from tests.kernels.oracles.rdna4_awq_w4a16_oracle import (  # noqa: E402
-    reference_dequant_awq_w4a16,
-)
+from tests.kernels.oracles import reference_dequant_awq_w4a16  # noqa: E402
 
 if not torch.cuda.is_available():
     pytest.skip("CUDA/ROCm not available. Skipping GPU tests.", allow_module_level=True)

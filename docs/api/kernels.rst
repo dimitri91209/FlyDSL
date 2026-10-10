@@ -90,6 +90,5 @@ Utilities
 - ``kernels.common.gfx120x_arch`` -- gfx120x arch check (``is_gfx120x``, ``require_gfx120x``)
 - ``kernels.common.gfx120x_capabilities`` -- gfx120x host catalog (``available_for_arch``, ``resolve``). Other arches get an empty catalog
 - ``kernels.common.gfx120x_swiglu`` -- gfx120x SiLU and SwiGLU (``silu_mul``, ``swiglu_chunk``)
-- ``kernels.common.gfx120x_autotune_tables`` -- gfx120x measured block-size tables
 
 .. seealso:: :doc:`../prebuilt_kernels_guide` for detailed usage and configuration of each kernel.

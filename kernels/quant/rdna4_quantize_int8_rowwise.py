@@ -27,13 +27,6 @@ TUNING_SCHEMA = 1
 _BLOCK_CHOICES = (32, 64, 128, 256, 512, 1024)
 
 
-def _block_threads(k: int) -> int:
-    """Measured gfx1201 BT gate (2026-09-30) — see gfx120x_autotune_tables."""
-    from kernels.common.gfx120x_autotune_tables import pick_quantize_int8_rowwise_block_threads
-
-    return pick_quantize_int8_rowwise_block_threads(k)
-
-
 @lru_cache(maxsize=64)
 def build_quantize_int8_rowwise_module(
     K: int, dtype_str: str, block_threads: Optional[int] = None
@@ -47,7 +40,7 @@ def build_quantize_int8_rowwise_module(
     from kernels.common.gfx120x_buf_helpers import buf_copy_load, buf_copy_store, ptr_buf_tensor
 
     if block_threads is None:
-        block_threads = _block_threads(K)
+        block_threads = BLOCK
     if block_threads not in _BLOCK_CHOICES:
         raise ValueError(f"block_threads={block_threads} is not a legal wave32 block")
     elem_dtype, elem_bits = {

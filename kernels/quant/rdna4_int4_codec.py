@@ -40,7 +40,7 @@ def unpack_int4_row_major(packed: torch.Tensor) -> torch.Tensor:
     """Inverse of :func:`pack_int4_row_major` with **signed** nibble ``[-8, 7]``.
 
     CUDA/gfx120x uses device ``expand_signed_i4``; CPU keeps a torch codec for
-    offline oracles under ``tests/kernels/oracles/``.
+    offline oracles in ``tests/kernels/oracles.py``.
     """
     import torch
 

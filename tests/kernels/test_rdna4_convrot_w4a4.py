@@ -21,9 +21,7 @@ from kernels.quant.rdna4_convrot_w4a4 import (  # noqa: E402
     dequantize_convrot_w4a4_weight,
     quantize_convrot_w4a4_weight,
 )
-from tests.kernels.oracles.rdna4_convrot_w4a4_oracle import (  # noqa: E402
-    reference_quantize_convrot_w4a4_weight,
-)
+from tests.kernels.oracles import reference_quantize_convrot_w4a4_weight  # noqa: E402
 
 if not torch.cuda.is_available():
     pytest.skip("CUDA/ROCm not available. Skipping GPU tests.", allow_module_level=True)
@@ -102,7 +100,7 @@ def test_convrot_w4a4_linear_int8_fallback() -> None:
     torch.cuda.synchronize()
 
     from kernels.quant.rdna4_convrot_w4a4 import _unpack_int4_row_major
-    from tests.kernels.oracles.rdna4_int8_convrot_oracle import reference_quantize_int8_convrot_weight
+    from tests.kernels.oracles import reference_quantize_int8_convrot_weight
 
     w_int8 = _unpack_int4_row_major(wq)
     aq, ascale = reference_quantize_int8_convrot_weight(x, group_size=group_size)
@@ -123,9 +121,7 @@ def test_convrot_w4a4_linear_int4_optin_vs_torch_ref() -> None:
     except ImportError:
         pytest.skip("iu4 GEMM atom not on this branch")
     from kernels.quant.rdna4_convrot_w4a4 import _unpack_int4_row_major
-    from tests.kernels.oracles.rdna4_convrot_w4a4_oracle import (
-        reference_quantize_convrot_w4a4_weight,
-    )
+    from tests.kernels.oracles import reference_quantize_convrot_w4a4_weight
 
     torch.manual_seed(17)
     m, n, k = 64, 64, 256

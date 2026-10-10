@@ -21,9 +21,7 @@ from kernels.quant.rdna4_asym_w4a8 import (  # noqa: E402
     quantize_w4a8_int8_weight,
     w4a8_int8_linear,
 )
-from tests.kernels.oracles.rdna4_asym_w4a8_oracle import (  # noqa: E402
-    reference_dequant_int4_grouped_to_int8,
-)
+from tests.kernels.oracles import reference_dequant_int4_grouped_to_int8  # noqa: E402
 
 if not torch.cuda.is_available():
     pytest.skip("CUDA/ROCm not available. Skipping GPU tests.", allow_module_level=True)
@@ -106,7 +104,7 @@ def test_w4a8_int8_linear_matches_ref() -> None:
     )
     torch.cuda.synchronize()
 
-    from tests.kernels.oracles.rdna4_int8_convrot_oracle import reference_quantize_int8_convrot_weight
+    from tests.kernels.oracles import reference_quantize_int8_convrot_weight
 
     w_int8 = reference_dequant_int4_grouped_to_int8(packed, s_rel, cb, group_size)
     aq, ascale = reference_quantize_int8_convrot_weight(x, group_size=convrot_g)

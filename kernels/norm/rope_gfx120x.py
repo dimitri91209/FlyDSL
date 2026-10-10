@@ -6,8 +6,7 @@ Applies cos/sin rotary embeddings to Q and K. Q and K may use different
 head counts (GQA): pass ``k_n_pairs_total`` and ``k_dim1``. Batch, sequence,
 and head dim stay shared. Freqs broadcast the same way as the equal-shape path.
 pair layout (split-half vs interleaved), and compile ``block`` size.
-Default ``block`` comes from ``pick_rope_block_threads(n_pairs_total)``
-(pair-count heuristic; see ``gfx120x_autotune_tables``).
+The default block is 256 threads. ``n_pairs_total`` does not change it.
 
 FlyDSL-native. Prefer ``rms_rope_gfx120x`` when RMSNorm
 precedes RoPE in the same layer.
@@ -29,25 +28,20 @@ from kernels.common.gfx120x_buf_helpers import (
 )
 
 KERNEL_NAME = "rope_gfx120x"
-
-
-def pick_rope_block_threads(n_pairs_total: int) -> int:
-    """Public n_pairs_total → compile block (gfx120x). Delegates to autotune tables."""
-    from kernels.common.gfx120x_autotune_tables import pick_rope_block_threads as _pick
-
-    return _pick(n_pairs_total)
+BLOCK_THREADS = 256
 
 
 def resolve_rope_block(n_pairs_total: int, block: Optional[int] = None) -> int:
-    """Default host path: use ``block`` override or ``pick_rope_block_threads``."""
+    """Use ``block`` when set. Otherwise 256 threads."""
+    del n_pairs_total
     if block is not None:
         return int(block)
-    return pick_rope_block_threads(int(n_pairs_total))
+    return BLOCK_THREADS
 
 
 def _resolve_build_block(block: Optional[int], n_pairs_total: Optional[int]) -> int:
     if block is None and n_pairs_total is None:
-        raise TypeError("RoPE build requires block= or n_pairs_total= (default via pick_rope_block_threads)")
+        raise TypeError("RoPE build requires block= or n_pairs_total=")
     return resolve_rope_block(int(n_pairs_total or 0), block)
 
 
@@ -57,7 +51,7 @@ def build_rope_module(
     *,
     n_pairs_total: Optional[int] = None,
 ) -> Callable[..., None]:
-    """Specialize RoPE kernel; default block via pick_rope_block_threads."""
+    """Specialize the RoPE kernel. The default block is 256 threads."""
     block = _resolve_build_block(block, n_pairs_total)
     return _build_rope_module_cached(x_name, block)
 
@@ -245,7 +239,7 @@ def build_rope_split_module(
     *,
     n_pairs_total: Optional[int] = None,
 ) -> Callable[..., None]:
-    """Specialize RoPE kernel; default block via pick_rope_block_threads."""
+    """Specialize the RoPE kernel. The default block is 256 threads."""
     block = _resolve_build_block(block, n_pairs_total)
     return _build_rope_split_module_cached(x_name, block)
 
@@ -364,7 +358,7 @@ def build_rope_qk_fused_module(
     *,
     n_pairs_total: Optional[int] = None,
 ) -> Callable[..., None]:
-    """Specialize RoPE kernel; default block via pick_rope_block_threads."""
+    """Specialize the RoPE kernel. The default block is 256 threads."""
     block = _resolve_build_block(block, n_pairs_total)
     return _build_rope_qk_fused_module_cached(x_name, block)
 
@@ -501,7 +495,7 @@ def build_rope_split_half_qk_fused_module(
     *,
     n_pairs_total: Optional[int] = None,
 ) -> Callable[..., None]:
-    """Specialize RoPE kernel; default block via pick_rope_block_threads."""
+    """Specialize the RoPE kernel. The default block is 256 threads."""
     block = _resolve_build_block(block, n_pairs_total)
     return _build_rope_split_half_qk_fused_module_cached(x_name, block)
 

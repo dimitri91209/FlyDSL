@@ -21,7 +21,7 @@ from kernels.gemm.rdna4_scaled_mm_fp8_fused import (  # noqa: E402
     scaled_mm_fp8_fused,
     scaled_mm_fp8_fused_multi,
 )
-from tests.kernels.oracles.rdna4_scaled_mm_fp8_fused_oracle import (  # noqa: E402
+from tests.kernels.oracles import (  # noqa: E402
     reference_scaled_mm_fp8_fused,
     reference_scaled_mm_fp8_fused_multi,
 )

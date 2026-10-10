@@ -30,7 +30,7 @@ from kernels.attention.flash_attn_gfx120x_host import (  # noqa: E402
     mask_is_noop,
     normalize_attn_mask,
 )
-from tests.kernels.oracles.fa_gfx120x_oracle import bottom_right_causal_bias  # noqa: E402
+from tests.kernels.oracles import bottom_right_causal_bias  # noqa: E402
 
 
 def _arch() -> str:

@@ -78,9 +78,8 @@ def _kernel_signature(**params: object) -> str:
 
 
 def _block_threads(k: int) -> int:
-    from kernels.common.gfx120x_autotune_tables import pick_asym_w4a8_block_threads
-
-    return pick_asym_w4a8_block_threads(k)
+    del k
+    return 256
 
 
 def _legal_block(block_threads: int) -> int:
