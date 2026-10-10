@@ -561,7 +561,7 @@ What operation do you need?
 | `kernels/quant/rdna4_awq_w4a16.py` | gfx120x AWQ W4A16 |
 | `kernels/quant/rdna4_svdquant_w4a4.py` | gfx120x SVDQuant W4A4 |
 | `kernels/quant/rdna4_int4_codec.py` | gfx120x int4 pack |
-| `kernels/common/gfx120x_arch.py` | gfx120x arch check |
+| `kernels/common/gfx120x_arch.py` | ``require_gfx120x`` |
 | `kernels/common/gfx120x_buf_helpers.py` | gfx120x buffer helpers |
 | `kernels/common/gfx120x_pad.py` | gfx120x pad |
 | `kernels/common/gfx120x_row_bias.py` | gfx120x row bias |

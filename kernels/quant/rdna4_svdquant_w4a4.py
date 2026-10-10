@@ -288,7 +288,7 @@ def dequant_svdquant_w4a4_weight(
     """
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(qweight.device, what="dequant_svdquant_w4a4_weight (gfx120x)")
+    require_gfx120x(what="dequant_svdquant_w4a4_weight (gfx120x)")
 
     if qweight.dim() != 2 or qweight.dtype != torch.int8:
         raise ValueError("qweight must be 2D int8")
@@ -628,7 +628,7 @@ def quantize_svdquant_w4a4(
     """
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(x.device, what="quantize_svdquant_w4a4 (gfx120x)")
+    require_gfx120x(what="quantize_svdquant_w4a4 (gfx120x)")
 
     if x.dim() != 2:
         raise ValueError(f"expected 2D input, got shape {tuple(x.shape)}")
@@ -1038,7 +1038,7 @@ def scaled_mm_svdquant_w4a4(
     """
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(act.device, what="scaled_mm_svdquant_w4a4 (gfx120x)")
+    require_gfx120x(what="scaled_mm_svdquant_w4a4 (gfx120x)")
 
     m, k_half = act.shape
     n = wgt.shape[0]
@@ -1143,7 +1143,7 @@ def svdquant_w4a4_linear(
     For ``act_unsigned`` (nunchaku post-GELU fc2), applies ``+0.171875`` shift
     to the main-path activation only; LoRA always sees raw ``x``.
     """
-    require_gfx120x(x.device, what="svdquant_w4a4_linear (gfx120x)")
+    require_gfx120x(what="svdquant_w4a4_linear (gfx120x)")
 
     orig_shape = x.shape
     x2d = x.reshape(-1, orig_shape[-1])

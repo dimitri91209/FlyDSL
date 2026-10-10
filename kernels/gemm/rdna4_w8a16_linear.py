@@ -561,7 +561,7 @@ def w8a16_gemm(
     """
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(a.device, what="w8a16_gemm (gfx120x)")
+    require_gfx120x(what="w8a16_gemm (gfx120x)")
     if a.dtype not in (torch.bfloat16, torch.float16):
         raise ValueError(f"W8A16 linear requires bf16/fp16 acts, got {a.dtype}")
     if b_nk.dtype not in _W8_TORCH:
@@ -663,7 +663,7 @@ def w8a16_linear(
 
     Soft-pads odd K; ``stream`` is ``torch.cuda.Stream`` (host).
     """
-    require_gfx120x(x.device, what="w8a16_linear (gfx120x)")
+    require_gfx120x(what="w8a16_linear (gfx120x)")
     orig_shape = x.shape
     x2d = x.reshape(-1, orig_shape[-1])
     if out_dtype is None:

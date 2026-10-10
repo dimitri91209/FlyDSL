@@ -295,7 +295,7 @@ def dequant_awq_w4a16_weight(
 
     ``wscales`` / ``wzeros`` keep layout ``(K//G, N)`` and are indexed in the kernel.
     """
-    require_gfx120x(qweight.device, what="dequant_awq_w4a16_weight (gfx120x)")
+    require_gfx120x(what="dequant_awq_w4a16_weight (gfx120x)")
 
     if qweight.dim() != 2 or qweight.dtype != torch.int8:
         raise ValueError("qweight must be 2D int8")
@@ -702,7 +702,7 @@ def gemv_awq_w4a16(
     Tile pick: :func:`pick_awq_gemv_tiles` (measured). ``force_n_tile`` overrides
     the N-tile for experiments. M>4 host-chunks in steps of 4.
     """
-    require_gfx120x(x.device, what="gemv_awq_w4a16 (gfx120x)")
+    require_gfx120x(what="gemv_awq_w4a16 (gfx120x)")
 
     if x.dim() < 1:
         raise ValueError("x must be at least 1D")

@@ -145,7 +145,7 @@ def add_row_bias(
     """
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(out.device, what="add_row_bias (gfx120x)")
+    require_gfx120x(what="add_row_bias (gfx120x)")
     if out.dtype not in _DTYPES:
         raise ValueError(f"add_row_bias input dtype {out.dtype} is not f32/f16/bf16")
     if bias.dtype not in _DTYPES:
@@ -252,7 +252,7 @@ def add_same(
     """
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(a.device, what="add_same (gfx120x)")
+    require_gfx120x(what="add_same (gfx120x)")
     if a.shape != b.shape or a.dtype != b.dtype or a.dtype not in _DTYPES:
         raise ValueError(
             f"add_same expects matching f32/f16/bf16 tensors, got {a.shape}/{a.dtype} and {b.shape}/{b.dtype}"
@@ -322,7 +322,7 @@ def mul_by_scale1(
     """
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(x.device, what="mul_by_scale1 (gfx120x)")
+    require_gfx120x(what="mul_by_scale1 (gfx120x)")
     if x.dtype not in _DTYPES:
         raise ValueError(f"mul_by_scale1 expects f32/f16/bf16, got {x.dtype}")
     if scale.dtype != torch.float32 or scale.device != x.device or scale.numel() != 1:

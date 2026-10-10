@@ -12,12 +12,12 @@ import sys
 
 import torch
 
-from kernels.common.gfx120x_arch import get_gcn_arch, is_gfx120x
+from flydsl.runtime.device import get_rocm_arch
 from kernels.gemm.rdna4_iu4_gemm import iu4_gemm
 from kernels.quant.rdna4_int4_codec import pack_int4_row_major
 
-_arch = get_gcn_arch()
-if not is_gfx120x():
+_arch = str(get_rocm_arch() or "")
+if not _arch.startswith("gfx120"):
     print(f"SKIP {__file__}: needs gfx120x, got {_arch or '<unknown>'}")
     sys.exit(0)
 

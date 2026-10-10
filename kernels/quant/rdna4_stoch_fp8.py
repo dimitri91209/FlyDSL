@@ -20,6 +20,7 @@ import flydsl.compiler as flyc
 import flydsl.expr as fx
 from flydsl.autotune import Config, autotune
 from flydsl.expr import math as fmath
+from kernels.common.gfx120x_arch import require_gfx120x
 from kernels.common.gfx120x_buf_helpers import buf_copy_load, buf_copy_store, kernel_signature, ptr_buf_tensor
 
 KERNEL_NAME = "stoch_fp8_gfx120x"
@@ -293,6 +294,7 @@ def build_stoch_fp8_module(
     block: int = BLOCK,
 ) -> Callable[..., None]:
     """Build @flyc.jit launcher. path in {"bitcast","select"}."""
+    require_gfx120x("build_stoch_fp8_module")
     if path not in ("bitcast", "select"):
         raise ValueError(f"unknown path {path!r}")
     if in_dtype not in ("float32", "float16", "bfloat16"):

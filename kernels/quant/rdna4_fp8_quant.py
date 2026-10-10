@@ -23,6 +23,7 @@ import flydsl.expr as fx
 from flydsl.autotune import Config, autotune
 from flydsl.expr import range_constexpr
 from flydsl.expr.typing import T
+from kernels.common.gfx120x_arch import require_gfx120x
 from kernels.common.gfx120x_buf_helpers import buf_copy_load, buf_copy_store, kernel_signature, ptr_buf_tensor
 
 KERNEL_NAME = "fp8_quant_gfx120x"
@@ -43,6 +44,7 @@ def build_fp8_quant_module(
     block_threads: int = BLOCK,
 ) -> Callable[..., None]:
     """Build the per-tensor FP8 quant kernel."""
+    require_gfx120x("build_fp8_quant_module")
     if block_threads not in _BLOCK_CHOICES:
         raise ValueError(f"block_threads={block_threads} is not a legal wave32 block")
     InTy = {"float32": fx.Float32, "float16": fx.Float16, "bfloat16": fx.BFloat16}[in_dtype]
@@ -167,6 +169,7 @@ def build_fp8_dequant_module(
     block_threads: int = BLOCK,
 ) -> Callable[..., None]:
     """Build the per-tensor FP8 dequant kernel."""
+    require_gfx120x("build_fp8_dequant_module")
     if block_threads not in _BLOCK_CHOICES:
         raise ValueError(f"block_threads={block_threads} is not a legal wave32 block")
     OutTy = {"float32": fx.Float32, "float16": fx.Float16, "bfloat16": fx.BFloat16}[out_dtype]
@@ -366,10 +369,9 @@ def dequantize_fp8(
     ``scale`` is one float32 value. ``e5m2`` follows ``q.dtype`` when ``q`` is
     a float8 tensor.
     """
-    from kernels.common.gfx120x_arch import require_gfx120x
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(q.device, what="dequantize_fp8 (gfx120x)")
+    require_gfx120x("dequantize_fp8")
     if q.dtype == torch.float8_e5m2:
         e5m2 = True
     elif q.dtype == torch.float8_e4m3fn:

@@ -3,7 +3,7 @@
 """gfx120x FlashAttention host call.
 
 Wave64 / CDNA attention stays on ``kernels/attention/flash_attn_interface.py``
-once ``is_gfx120x`` is false. This file calls the gfx120x host directly so a
+once the process arch is not gfx120x. This file calls the gfx120x host directly so a
 port can see the argument order without the router.
 
 gfx120x only.
@@ -14,10 +14,10 @@ import sys
 
 import torch
 
-from kernels.common.gfx120x_arch import get_gcn_arch, is_gfx120x
+from flydsl.runtime.device import get_rocm_arch
 
-_arch = get_gcn_arch()
-if not is_gfx120x():
+_arch = str(get_rocm_arch() or "")
+if not _arch.startswith("gfx120"):
     print(f"SKIP {__file__}: needs gfx120x, got {_arch or '<unknown>'}")
     sys.exit(0)
 

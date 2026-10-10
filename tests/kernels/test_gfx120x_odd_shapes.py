@@ -19,7 +19,6 @@ if _REPO_ROOT not in sys.path:
 
 from flydsl.runtime.device import get_rocm_arch  # noqa: E402
 from kernels.attention.flash_attn_gfx120x_host import flydsl_flash_attn_func  # noqa: E402
-from kernels.common.gfx120x_arch import is_gfx120x  # noqa: E402
 from kernels.gemm.rdna4_fused_mlp_nmajor import fused_swiglu_mlp_nmajor  # noqa: E402
 from kernels.gemm.rdna4_iu4_gemm import iu4_gemm  # noqa: E402
 from kernels.gemm.rdna4_scaled_mm_fp8 import scaled_mm_fp8  # noqa: E402
@@ -34,7 +33,7 @@ if not torch.cuda.is_available():
     pytest.skip("CUDA/ROCm not available. Skipping GPU tests.", allow_module_level=True)
 
 ARCH = str(get_rocm_arch() or "")
-if not is_gfx120x():
+if not ARCH.startswith("gfx120"):
     pytest.skip(f"odd-shape suite requires gfx120x, got {ARCH}", allow_module_level=True)
 
 

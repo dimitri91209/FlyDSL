@@ -16,11 +16,11 @@ import torch.nn.functional as F
 import flydsl.compiler as flyc
 import flydsl.expr as fx
 from flydsl.compiler.jit_argument import PointerJitArg
-from kernels.common.gfx120x_arch import get_gcn_arch, is_gfx120x
+from flydsl.runtime.device import get_rocm_arch
 from kernels.common.gfx120x_swiglu import build_silu_mul_module
 
-_arch = get_gcn_arch()
-if not is_gfx120x():
+_arch = str(get_rocm_arch() or "")
+if not _arch.startswith("gfx120"):
     print(f"SKIP {__file__}: needs gfx120x, got {_arch or '<unknown>'}")
     sys.exit(0)
 

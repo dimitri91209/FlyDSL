@@ -382,7 +382,7 @@ def mxfp4_block_gemm(
     import flydsl.expr as fx
     from kernels.common.tensor_shim import _run_compiled
 
-    require_gfx120x(a.device, what="mxfp4_block_gemm (gfx120x)")
+    require_gfx120x(what="mxfp4_block_gemm (gfx120x)")
     if a.dtype != torch.uint8 or b.dtype != torch.uint8:
         raise ValueError(f"A/B must be uint8 packed E2M1, got {a.dtype}, {b.dtype}")
     if scale_a.dtype != torch.uint8 or scale_b.dtype != torch.uint8:

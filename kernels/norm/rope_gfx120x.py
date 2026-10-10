@@ -20,6 +20,7 @@ import flydsl.compiler as flyc
 import flydsl.expr as fx
 from flydsl.expr import gpu
 from flydsl.expr.typing import T
+from kernels.common.gfx120x_arch import require_gfx120x
 from kernels.common.gfx120x_buf_helpers import (
     buf_copy_load,
     buf_copy_store,
@@ -52,6 +53,7 @@ def build_rope_module(
     n_pairs_total: Optional[int] = None,
 ) -> Callable[..., None]:
     """Specialize the RoPE kernel. The default block is 256 threads."""
+    require_gfx120x("build_rope_module")
     block = _resolve_build_block(block, n_pairs_total)
     return _build_rope_module_cached(x_name, block)
 
@@ -240,6 +242,7 @@ def build_rope_split_module(
     n_pairs_total: Optional[int] = None,
 ) -> Callable[..., None]:
     """Specialize the RoPE kernel. The default block is 256 threads."""
+    require_gfx120x("build_rope_module")
     block = _resolve_build_block(block, n_pairs_total)
     return _build_rope_split_module_cached(x_name, block)
 
@@ -359,6 +362,7 @@ def build_rope_qk_fused_module(
     n_pairs_total: Optional[int] = None,
 ) -> Callable[..., None]:
     """Specialize the RoPE kernel. The default block is 256 threads."""
+    require_gfx120x("build_rope_module")
     block = _resolve_build_block(block, n_pairs_total)
     return _build_rope_qk_fused_module_cached(x_name, block)
 
@@ -496,6 +500,7 @@ def build_rope_split_half_qk_fused_module(
     n_pairs_total: Optional[int] = None,
 ) -> Callable[..., None]:
     """Specialize the RoPE kernel. The default block is 256 threads."""
+    require_gfx120x("build_rope_module")
     block = _resolve_build_block(block, n_pairs_total)
     return _build_rope_split_half_qk_fused_module_cached(x_name, block)
 

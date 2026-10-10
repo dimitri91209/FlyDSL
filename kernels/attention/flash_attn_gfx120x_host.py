@@ -41,7 +41,7 @@ import torch
 import flydsl.expr as fx
 from flydsl.expr import range_constexpr
 from flydsl.expr.typing import Vector as Vec
-from kernels.common.gfx120x_arch import is_gfx120x, require_gfx120x
+from kernels.common.gfx120x_arch import require_gfx120x
 from kernels.common.gfx120x_pad import device_pad
 
 # WMMA score columns for one lane: low K-half, then the +16 half.
@@ -324,7 +324,6 @@ __all__ = [
     "flydsl_flash_attn_varlen_paged_func",
     "flydsl_flash_attn_fp8_func",
     "flydsl_flash_attn_int8_func",
-    "is_gfx120x",
     "normalize_attn_mask",
     "mask_is_noop",
     "fold_alibi_to_bias",
@@ -978,7 +977,7 @@ def flydsl_flash_attn_func(
             "(iu8 WMMA + descales); bf16 path is bf16/fp16 only."
         )
     # Self-contained family gate at this gfx120x-only entry (shared FA soft-routes first).
-    require_gfx120x(q.device, what="flydsl_flash_attn_func (gfx120x)")
+    require_gfx120x(what="flydsl_flash_attn_func (gfx120x)")
     launch_stream = torch.cuda.current_stream(q.device) if stream is None else stream
     if launch_stream.device != q.device:
         raise ValueError(f"`stream` must be on {q.device}, got {launch_stream.device}")
@@ -1398,7 +1397,7 @@ def flydsl_flash_attn_varlen_func(
 
     if not (q.is_cuda and k.is_cuda and v.is_cuda):
         raise ValueError("flydsl_flash_attn_varlen_func requires CUDA/HIP tensors")
-    require_gfx120x(q.device, what="flydsl_flash_attn_varlen_func")
+    require_gfx120x(what="flydsl_flash_attn_varlen_func")
     launch_stream = torch.cuda.current_stream(q.device) if stream is None else stream
     if launch_stream.device != q.device:
         raise ValueError(f"`stream` must be on {q.device}, got {launch_stream.device}")
@@ -1652,7 +1651,7 @@ def flydsl_flash_attn_paged_func(
 
     if not (q.is_cuda and k_cache.is_cuda and v_cache.is_cuda):
         raise ValueError("flydsl_flash_attn_paged_func requires CUDA/HIP tensors")
-    require_gfx120x(q.device, what="flydsl_flash_attn_paged_func")
+    require_gfx120x(what="flydsl_flash_attn_paged_func")
     launch_stream = torch.cuda.current_stream(q.device) if stream is None else stream
     if launch_stream.device != q.device:
         raise ValueError(f"`stream` must be on {q.device}, got {launch_stream.device}")
@@ -1968,7 +1967,7 @@ def flydsl_flash_attn_varlen_paged_func(
 
     if not (q.is_cuda and k_cache.is_cuda and v_cache.is_cuda):
         raise ValueError("varlen paged requires CUDA/HIP tensors")
-    require_gfx120x(q.device, what="flydsl_flash_attn_varlen_paged_func")
+    require_gfx120x(what="flydsl_flash_attn_varlen_paged_func")
     launch_stream = torch.cuda.current_stream(q.device) if stream is None else stream
     if launch_stream.device != q.device:
         raise ValueError(f"`stream` must be on {q.device}, got {launch_stream.device}")
@@ -2370,7 +2369,7 @@ def _quant_dense_launch(
         raise ValueError(f"{what} requires CUDA/HIP tensors")
     if not (q.device == k.device == v.device):
         raise ValueError(f"q/k/v must reside on the same device, got q={q.device} k={k.device} v={v.device}")
-    require_gfx120x(q.device, what=f"{what} (gfx120x)")
+    require_gfx120x(what=f"{what} (gfx120x)")
     launch_stream = torch.cuda.current_stream(q.device) if stream is None else stream
     if launch_stream.device != q.device:
         raise ValueError(f"`stream` must be on {q.device}, got {launch_stream.device}")
@@ -2724,7 +2723,7 @@ def _quant_varlen_launch(
         )
     if q.shape[2] != k.shape[2] or k.shape[1] != v.shape[1] or q.shape[2] != v.shape[2]:
         raise ValueError(f"quant varlen shape mismatch q={tuple(q.shape)} k={tuple(k.shape)} v={tuple(v.shape)}")
-    require_gfx120x(q.device, what=f"flydsl_flash_attn_{kind}_varlen_func")
+    require_gfx120x(what=f"flydsl_flash_attn_{kind}_varlen_func")
     launch_stream = torch.cuda.current_stream(q.device) if stream is None else stream
     num_heads = int(q.shape[1])
     num_kv_heads = int(k.shape[1])
@@ -2997,7 +2996,7 @@ def flydsl_flash_attn_quant_paged_func(
     layout = kv_cache_layout or "linear"
     if layout not in ("linear", "linear3d", "vectorized"):
         raise NotImplementedError(f"gfx120x quant FA paged layout {layout!r} is not supported")
-    require_gfx120x(q.device, what=f"flydsl_flash_attn_{kind}_paged")
+    require_gfx120x(what=f"flydsl_flash_attn_{kind}_paged")
     launch_stream = torch.cuda.current_stream(q.device) if stream is None else stream
     varlen = cu_seqlens_q is not None
     if layout == "linear3d":

@@ -482,7 +482,7 @@ def quantize_convrot_w4a4_weight(
     """
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(weight.device, what="quantize_convrot_w4a4_weight (gfx120x)")
+    require_gfx120x(what="quantize_convrot_w4a4_weight (gfx120x)")
 
     if quant_group_size != _INT4_GROUP_SIZE:
         raise ValueError(f"int4 MMA contract requires quant_group_size {_INT4_GROUP_SIZE}, got {quant_group_size}")
@@ -583,7 +583,7 @@ def expand_signed_i4(packed: torch.Tensor, *, stream: torch.cuda.Stream | None =
     """Device signed-nibble unpack. ``packed[..., K//2]`` → ``[..., K]`` int8."""
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(packed.device, what="expand_signed_i4 (gfx120x)")
+    require_gfx120x(what="expand_signed_i4 (gfx120x)")
 
     if packed.dtype != torch.int8:
         raise ValueError(f"packed must be int8, got {packed.dtype}")
@@ -687,7 +687,7 @@ def dequantize_convrot_w4a4_weight(
     from kernels.common.gfx120x_pad import ensure_contiguous
     from kernels.quant.rdna4_int8_convrot import convrot_fwht
 
-    require_gfx120x(qdata.device, what="dequantize_convrot_w4a4_weight (gfx120x)")
+    require_gfx120x(what="dequantize_convrot_w4a4_weight (gfx120x)")
     if output_dtype is None:
         output_dtype = torch.float32
     if quant_group_size != _INT4_GROUP_SIZE:
@@ -825,7 +825,7 @@ def convrot_w4a4_linear(
     See ``docs/prebuilt_kernels_guide.md`` for call examples.
     Requires gfx120x iu4 WMMA (and iu8 when ``linear_dtype='int8'``).
     """
-    require_gfx120x(x.device, what="convrot_w4a4_linear (gfx120x)")
+    require_gfx120x(what="convrot_w4a4_linear (gfx120x)")
 
     from kernels.quant.rdna4_int8_convrot import int8_linear_convrot
 

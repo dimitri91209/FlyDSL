@@ -1,11 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 FlyDSL Project Contributors
-"""Kernel-facing names for the gfx120x checks in ``flydsl.runtime.device``.
+"""One gfx120x check for launch functions.
 
-The implementation lives next to ``is_rdna_arch`` and ``get_warp_size``.
-This module only re-exports it so kernel imports stay stable.
+Uses ``get_rocm_arch``, the same process arch the gfx950 GEMMs use.
+``gfx1250`` does not match.
 """
 
-from flydsl.runtime.device import get_gcn_arch, is_gfx120x, is_gfx120x_arch, require_gfx120x
+from flydsl.runtime.device import get_rocm_arch
 
-__all__ = ["get_gcn_arch", "is_gfx120x_arch", "is_gfx120x", "require_gfx120x"]
+
+def require_gfx120x(what: str = "this gfx120x kernel") -> None:
+    """Raise unless the process arch starts with ``gfx120``."""
+    arch = str(get_rocm_arch() or "")
+    if not arch.startswith("gfx120"):
+        raise ValueError(f"{what} requires gfx120x, got arch={arch!r}")
+
+
+__all__ = ["require_gfx120x"]

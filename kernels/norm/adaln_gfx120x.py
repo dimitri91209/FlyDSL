@@ -21,6 +21,7 @@ import flydsl.compiler as flyc
 import flydsl.expr as fx
 from flydsl.expr import const_expr, gpu, range_constexpr
 from flydsl.expr import math as fmath
+from kernels.common.gfx120x_arch import require_gfx120x
 from kernels.common.gfx120x_buf_helpers import kernel_signature
 
 KERNEL_NAME = "adaln_gfx120x"
@@ -33,6 +34,7 @@ def build_adaln_module(
     N: int, dtype_str: str, subtract_mean: bool, block_threads: Optional[int] = None
 ) -> Callable[..., None]:
     """Specialize fused AdaLN kernel on (N, dtype, subtract_mean)."""
+    require_gfx120x("build_adaln_module")
 
     if block_threads is None:
         block_threads = BLOCK_THREADS

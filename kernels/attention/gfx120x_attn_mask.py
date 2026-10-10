@@ -64,7 +64,7 @@ def bool_mask_to_additive(
     stream: torch.cuda.Stream | None = None,
 ) -> torch.Tensor:
     """Convert a bool mask to fp32 additive bias (True→0, False→-inf) on device."""
-    require_gfx120x(mask.device, what="bool_mask_to_additive (gfx120x)")
+    require_gfx120x(what="bool_mask_to_additive (gfx120x)")
     if mask.dtype != torch.bool:
         raise TypeError(f"bool_mask_to_additive expects bool, got {mask.dtype}")
     m = mask.detach().contiguous()

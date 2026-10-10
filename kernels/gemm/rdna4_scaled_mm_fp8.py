@@ -565,7 +565,7 @@ def scaled_mm_fp8(
     from kernels.common.gfx120x_arch import require_gfx120x
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(a.device, what="scaled_mm_fp8 (gfx120x)")
+    require_gfx120x(what="scaled_mm_fp8 (gfx120x)")
     if a.ndim != 2 or b_nk.ndim != 2:
         raise ValueError("a and b_nk must be 2D [M,K] and [N,K]")
     _fp8 = (torch.float8_e4m3fn, torch.float8_e5m2)

@@ -304,7 +304,7 @@ _mxfp4_dequant_tuned = autotune(
 
 def quantize_mxfp4_device(w: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """Quantize ``[..., K]`` to packed MXFP4 plus per-32 E8M0 scales."""
-    require_gfx120x(w.device, what="quantize_mxfp4 (gfx120x)")
+    require_gfx120x(what="quantize_mxfp4 (gfx120x)")
     if w.dtype not in (torch.float32, torch.bfloat16, torch.float16):
         raise ValueError(f"MXFP4 quant input must be f32/f16/bf16, got {w.dtype}")
     if w.shape[-1] % 32:
@@ -332,7 +332,7 @@ def quantize_mxfp4_device(w: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
 
 def dequantize_mxfp4_device(q: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     """Decode packed MXFP4 and per-32 E8M0 scales to fp32."""
-    require_gfx120x(q.device, what="dequantize_mxfp4 (gfx120x)")
+    require_gfx120x(what="dequantize_mxfp4 (gfx120x)")
     q = q.view(torch.uint8)
     if scale.dtype != torch.uint8:
         raise ValueError(f"MXFP4 scales must be uint8, got {scale.dtype}")

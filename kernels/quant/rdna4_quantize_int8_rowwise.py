@@ -324,7 +324,7 @@ def quantize_int8_rowwise(
     reshaped to ``(*x.shape[:-1], 1)`` (HIP-compatible trailing singleton).
     Direct/AOT callers must pass ``OutScale`` as float32 ``[rows]`` (not ``[rows, 1]``).
     """
-    require_gfx120x(x.device, what="quantize_int8_rowwise (gfx120x)")
+    require_gfx120x(what="quantize_int8_rowwise (gfx120x)")
     if stochastic_rounding:
         raise ValueError("quantize_int8_rowwise: stochastic_rounding not supported")
     if not _layout_ok(x):
@@ -365,7 +365,7 @@ def dequantize_int8_rowwise(
     from kernels.common.gfx120x_buf_helpers import buf_copy_load, buf_copy_store, ptr_buf_tensor
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(q.device, what="dequantize_int8_rowwise (gfx120x)")
+    require_gfx120x(what="dequantize_int8_rowwise (gfx120x)")
     if q.dtype != torch.int8:
         raise ValueError(f"q must be int8, got {q.dtype}")
     names = {

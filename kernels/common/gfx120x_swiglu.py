@@ -331,7 +331,7 @@ def silu_mul(
     stream: torch.cuda.Stream | None = None,
 ) -> torch.Tensor:
     """Product silu(gate)*up. A length that is not a vector multiple stays in the kernel."""
-    require_gfx120x(gate.device, what="silu_mul (gfx120x)")
+    require_gfx120x(what="silu_mul (gfx120x)")
     if gate.dtype not in _DTYPE_NAME or up.dtype != gate.dtype:
         raise ValueError(f"silu_mul requires matching bf16/fp16/f32, got {gate.dtype}/{up.dtype}")
     if gate.shape != up.shape:
@@ -383,7 +383,7 @@ def swiglu_chunk(
     4 for f32) is scalar-loaded in the kernel. ``stream`` is
     ``torch.cuda.Stream`` (host); the kernel launch uses ``fx.Stream``.
     """
-    require_gfx120x(x.device, what="swiglu_chunk (gfx120x)")
+    require_gfx120x(what="swiglu_chunk (gfx120x)")
     if x.dtype not in _DTYPE_NAME:
         raise ValueError(f"swiglu_chunk requires bf16/fp16/f32, got {x.dtype}")
     if x.shape[-1] % 2 != 0:

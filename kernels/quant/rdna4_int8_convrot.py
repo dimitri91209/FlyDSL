@@ -844,7 +844,7 @@ def convrot_fwht(
     """
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(weight.device, what="convrot_fwht (gfx120x)")
+    require_gfx120x(what="convrot_fwht (gfx120x)")
 
     if weight.dtype not in (torch.float32, torch.float16, torch.bfloat16):
         raise ValueError(f"unsupported dtype {weight.dtype}")
@@ -892,7 +892,7 @@ def quantize_int8_convrot_weight(
     """
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(weight.device, what="quantize_int8_convrot_weight (gfx120x)")
+    require_gfx120x(what="quantize_int8_convrot_weight (gfx120x)")
 
     seed = 0 if stochastic_rounding is None else int(stochastic_rounding)
     if seed < 0:
@@ -959,7 +959,7 @@ def dequantize_int8_convrot_weight(
     """
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(q.device, what="dequantize_int8_convrot_weight (gfx120x)")
+    require_gfx120x(what="dequantize_int8_convrot_weight (gfx120x)")
 
     if out_dtype is None:
         out_dtype = torch.bfloat16
@@ -1046,7 +1046,7 @@ def int8_linear_convrot(
     """
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(x.device, what="int8_linear_convrot (gfx120x)")
+    require_gfx120x(what="int8_linear_convrot (gfx120x)")
 
     from kernels.gemm.rdna4_int8_linear import int8_linear
 

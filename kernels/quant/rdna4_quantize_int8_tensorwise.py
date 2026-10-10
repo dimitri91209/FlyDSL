@@ -670,7 +670,7 @@ def quantize_int8_tensorwise(
     ``q`` matches ``x.shape`` (int8). ``scale`` is a 0-dim float32 tensor on
     ``x.device`` (reference ``quantize_int8_tensorwise``).
     """
-    require_gfx120x(x.device, what="quantize_int8_tensorwise (gfx120x)")
+    require_gfx120x(what="quantize_int8_tensorwise (gfx120x)")
     if stochastic_rounding:
         raise ValueError("quantize_int8_tensorwise: stochastic_rounding not supported")
     if isinstance(scale, str):
@@ -723,7 +723,7 @@ def dequantize_int8_tensorwise(
     stream: torch.cuda.Stream | None = None,
 ) -> torch.Tensor:
     """Inverse of ``quantize_int8_tensorwise``: ``q * scale``."""
-    require_gfx120x(q.device, what="dequantize_int8_tensorwise (gfx120x)")
+    require_gfx120x(what="dequantize_int8_tensorwise (gfx120x)")
     if q.dtype != torch.int8:
         raise ValueError(f"q must be int8, got {q.dtype}")
     names = {

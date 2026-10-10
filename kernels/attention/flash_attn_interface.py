@@ -135,9 +135,8 @@ def _dtype_str(t: torch.Tensor) -> str:
 
 @functools.lru_cache(maxsize=16)
 def _gpu_arch(device: torch.device) -> str:
-    """Best-effort GCN arch for this device; never raises. Lower-cased, colon-stripped."""
     try:
-        return (torch.cuda.get_device_properties(device.index).gcnArchName or "").lower().split(":")[0]
+        return torch.cuda.get_device_properties(device.index).gcnArchName.split(":")[0]
     except Exception:
         return ""
 
@@ -2184,10 +2183,8 @@ def flydsl_flash_attn_fp8_func(*args, **kwargs):
     sm = kwargs.pop("sm_scale", None)
     q = args[0] if args else kwargs.get("q")
     on_120 = False
-    if q is not None:
-        from kernels.common.gfx120x_arch import is_gfx120x as _is_gfx120x
-
-        on_120 = _is_gfx120x(getattr(q, "device", None))
+    if q is not None and getattr(q, "is_cuda", False):
+        on_120 = _gpu_arch(q.device).startswith("gfx120")
     if sm is not None:
         if not on_120:
             kwargs["sm_scale"] = sm

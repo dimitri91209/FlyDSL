@@ -171,7 +171,7 @@ def int8_linear(
     from flydsl.compiler.jit_argument import PointerJitArg
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(a_int8.device, what="int8_linear (gfx120x)")
+    require_gfx120x(what="int8_linear (gfx120x)")
     if a_int8.dtype != torch.int8 or b_int8.dtype != torch.int8:
         raise ValueError("iu8 int8 linear requires int8 A/B")
     a = ensure_contiguous(a_int8, stream=stream)

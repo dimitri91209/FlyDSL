@@ -5,7 +5,7 @@
 import pytest
 import torch
 
-from kernels.common.gfx120x_arch import is_gfx120x
+from flydsl.runtime.device import get_rocm_arch
 from kernels.gemm.rdna4_fused_mlp_nmajor import (
     _run_tile,
     fused_gemm_tn,
@@ -192,7 +192,7 @@ def test_fused_swiglu_mlp_inreg_host_tile_non16(m: int, n_out: int) -> None:
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16], ids=["bf16", "f16"])
 def test_gemm_bf16_nmajor_lds_matches_matmul(m: int, n: int, k: int, dtype: torch.dtype) -> None:
     """Multi-wave LDS production GEMM vs torch matmul (K>16 shapes)."""
-    if not is_gfx120x():
+    if not str(get_rocm_arch() or "").startswith("gfx120"):
         pytest.skip("requires gfx120x")
     _require_gfx120x()
     torch.manual_seed(20 + m + n + k)
@@ -217,7 +217,7 @@ def test_gemm_bf16_nmajor_lds_matches_matmul(m: int, n: int, k: int, dtype: torc
 )
 def test_fused_swiglu_mlp_nmajor_lds_k_gt_16(m: int, k: int, ffn: int, n_out: int) -> None:
     """K/FFN>16 uses the in-kernel LDS-mid loop; matches eager reference."""
-    if not is_gfx120x():
+    if not str(get_rocm_arch() or "").startswith("gfx120"):
         pytest.skip("requires gfx120x")
     _require_gfx120x()
     torch.manual_seed(30 + m + k + ffn)
@@ -245,7 +245,7 @@ def test_fused_swiglu_mlp_nmajor_lds_k_gt_16(m: int, k: int, ffn: int, n_out: in
 )
 def test_fused_swiglu_mlp_lds_odd_shape_matches_eager(m: int, k: int, ffn: int, n_out: int, dtype: torch.dtype) -> None:
     """Short K, FFN, or panels stay on the caller's storage and match eager."""
-    if not is_gfx120x():
+    if not str(get_rocm_arch() or "").startswith("gfx120"):
         pytest.skip("requires gfx120x")
     _require_gfx120x()
     torch.manual_seed(50 + m + k + ffn + n_out)
@@ -267,7 +267,7 @@ def test_fused_swiglu_mlp_lds_odd_shape_matches_eager(m: int, k: int, ffn: int, 
 
 def test_fused_swiglu_odd_shape_does_not_device_pad(monkeypatch: pytest.MonkeyPatch) -> None:
     """The product host must not clone a short K or FFN up to the WMMA tile."""
-    if not is_gfx120x():
+    if not str(get_rocm_arch() or "").startswith("gfx120"):
         pytest.skip("requires gfx120x")
     _require_gfx120x()
     import kernels.common.gfx120x_pad as padmod
@@ -291,7 +291,7 @@ def test_fused_swiglu_odd_shape_does_not_device_pad(monkeypatch: pytest.MonkeyPa
 
 def test_gemm_bf16_nmajor_zero_lds_still_works() -> None:
     """nmajor GEMM matches A @ B.T. The host entry always uses the LDS kernel."""
-    if not is_gfx120x():
+    if not str(get_rocm_arch() or "").startswith("gfx120"):
         pytest.skip("requires gfx120x")
     _require_gfx120x()
     torch.manual_seed(41)

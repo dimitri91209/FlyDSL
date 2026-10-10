@@ -649,7 +649,7 @@ def scaled_mm_fp8_fused(
     (and optional scale list) for N adapters in load order — dispatches to
     ``scaled_mm_fp8_fused_multi``.
     """
-    require_gfx120x(a_f.device, what="scaled_mm_fp8_fused (gfx120x)")
+    require_gfx120x(what="scaled_mm_fp8_fused (gfx120x)")
     # Device LoRA residual: any LoRA count (1..N) uses multi/device residual path (in-kernel
     # LoRA epilogue measured slower than HIP on an otherwise idle gfx120x).
     if (
@@ -888,7 +888,7 @@ def scaled_mm_fp8_fused_multi(
     Args accept a single tensor or a sequence of tensors for downs/ups; scales
     may be a scalar (broadcast) or a per-adapter sequence.
     """
-    require_gfx120x(a_f.device, what="scaled_mm_fp8_fused_multi (gfx120x)")
+    require_gfx120x(what="scaled_mm_fp8_fused_multi (gfx120x)")
     if a_f.dim() != 2 or b_nk.dim() != 2:
         raise ValueError("scaled_mm_fp8_fused_multi expects 2D operands")
     m, k = a_f.shape

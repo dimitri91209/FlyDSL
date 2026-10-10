@@ -20,7 +20,8 @@ if not torch.cuda.is_available():
 
 import torch.nn.functional as F  # noqa: E402
 
-from kernels.attention.flash_attn_gfx120x_host import fold_alibi_to_bias, is_gfx120x  # noqa: E402
+from flydsl.runtime.device import get_rocm_arch  # noqa: E402
+from kernels.attention.flash_attn_gfx120x_host import fold_alibi_to_bias  # noqa: E402
 from kernels.attention.flash_attn_interface import flydsl_flash_attn_func  # noqa: E402
 
 _KINDS = ("bf16", "fp16", "fp8_e4m3", "fp8_e5m2", "int8")
@@ -34,7 +35,10 @@ def _arch() -> str:
 pytestmark = [
     pytest.mark.l2_device,
     pytest.mark.rocm_lower,
-    pytest.mark.skipif(not is_gfx120x(), reason=f"requires gfx120x, got {_arch()!r}"),
+    pytest.mark.skipif(
+        not str(get_rocm_arch() or "").startswith("gfx120"),
+        reason=f"requires gfx120x, got {_arch()!r}",
+    ),
 ]
 
 

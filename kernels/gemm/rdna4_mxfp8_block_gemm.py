@@ -390,7 +390,7 @@ def mxfp8_block_gemm(
     import flydsl.expr as fx
     from kernels.common.tensor_shim import _run_compiled
 
-    require_gfx120x(a.device, what="mxfp8_block_gemm (gfx120x)")
+    require_gfx120x(what="mxfp8_block_gemm (gfx120x)")
     if a.dtype != torch.float8_e4m3fn or b.dtype != torch.float8_e4m3fn:
         raise ValueError(f"A/B must be float8_e4m3fn, got {a.dtype}, {b.dtype}")
     if scale_a.dtype != torch.uint8 or scale_b.dtype != torch.uint8:

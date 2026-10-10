@@ -6,17 +6,8 @@ Canonical home for ``ptr_buf_tensor``, ``buf_copy_load`` / ``buf_copy_store``,
 ``buf_base_i64``, and ``kernel_signature``. Used by the gfx120x quant,
 elementwise, norm, RoPE, and AdaLN kernel modules.
 
-Gate contract
--------------
-These are **compile-time kernel helpers**, not public host entrypoints. They
-do not call ``require_gfx120x`` themselves (they have no tensor device). Call
-them only from kernels / builders that are already reached through a
-gfx120x-gated host:
-
-- Soft ``is_gfx120x(device)`` at shared routers (never raises; gfx950 /
-  gfx1250 keep their paths).
-- Hard ``require_gfx120x(device)`` at each gfx120x-only public host with the
-  caller tensor device (see ``kernels.common.gfx120x_arch``).
+These are compile-time kernel helpers, not launch functions. They do not
+check the architecture. Each gfx120x launch calls ``require_gfx120x``.
 
 """
 

@@ -701,7 +701,7 @@ def gemm_bf16_nmajor_lds(
     entry. The cache key is the dtype names and that padded-shape class, not
     one measured ``(M, N, K)``.
     """
-    require_gfx120x(a.device, what="gemm_bf16_nmajor_lds (gfx120x)")
+    require_gfx120x(what="gemm_bf16_nmajor_lds (gfx120x)")
     if a.ndim != 2 or b_nk.ndim != 2:
         raise ValueError("expects A[M,K], B[N,K]")
     if a.dtype not in (torch.bfloat16, torch.float16):
@@ -780,7 +780,7 @@ def fused_gemm_tn(
     out_dtype: Optional[torch.dtype] = None,
 ) -> torch.Tensor:
     """``C1 = (A0 @ B0.T) @ B1.T`` via zero-LDS fused WMMA (16×16 panels only)."""
-    require_gfx120x(a0.device, what="fused_gemm_tn (gfx120x)")
+    require_gfx120x(what="fused_gemm_tn (gfx120x)")
     for t, name in ((a0, "a0"), (b0, "b0"), (b1, "b1")):
         if t.shape != (_TILE, _TILE):
             raise ValueError(f"{name} must be [16,16], got {tuple(t.shape)}")
@@ -863,7 +863,7 @@ def fused_swiglu_mlp_inreg(
     """
     from kernels.common.gfx120x_pad import device_pad, ensure_contiguous
 
-    require_gfx120x(x.device, what="fused_swiglu_mlp_inreg (gfx120x)")
+    require_gfx120x(what="fused_swiglu_mlp_inreg (gfx120x)")
     if out_dtype is None:
         out_dtype = x.dtype
     orig = x.shape
@@ -1270,7 +1270,7 @@ def fused_swiglu_mlp_lds(
     """
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(x.device, what="fused_swiglu_mlp_lds (gfx120x)")
+    require_gfx120x(what="fused_swiglu_mlp_lds (gfx120x)")
     if out_dtype is None:
         out_dtype = x.dtype
     orig = x.shape
@@ -1355,7 +1355,7 @@ def fused_swiglu_mlp_nmajor(
     in-register cube. Every other positive shape uses the LDS kernel, which
     reads the caller's K and FFN and zero-fills the tail. Weights are ``[N, K]``.
     """
-    require_gfx120x(x.device, what="fused_swiglu_mlp_nmajor (gfx120x)")
+    require_gfx120x(what="fused_swiglu_mlp_nmajor (gfx120x)")
     if out_dtype is None:
         out_dtype = x.dtype
     k = int(x.shape[-1])

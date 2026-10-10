@@ -105,7 +105,7 @@ def fill_alibi_bias(
     stream: torch.cuda.Stream | None = None,
 ) -> torch.Tensor:
     """Fill ALiBi bias on device. slopes is contiguous fp32 [H] (or [1])."""
-    require_gfx120x(slopes.device, what="fill_alibi_bias (gfx120x)")
+    require_gfx120x(what="fill_alibi_bias (gfx120x)")
     s = ensure_contiguous(slopes.detach().to(dtype=torch.float32), stream=stream)
     if s.dim() != 1 or s.numel() < 1:
         raise ValueError(f"fill_alibi_bias: slopes must be 1D nonempty, got {tuple(s.shape)}")

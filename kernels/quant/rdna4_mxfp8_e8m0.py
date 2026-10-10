@@ -488,7 +488,7 @@ def quantize_mxfp8_device(
     """
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(x.device, what="quantize_mxfp8 (gfx120x)")
+    require_gfx120x(what="quantize_mxfp8 (gfx120x)")
     if x.dtype not in (torch.float32, torch.bfloat16, torch.float16):
         raise ValueError(f"MXFP8 quant input must be f32/f16/bf16, got {x.dtype}")
     orig_k = int(x.shape[-1])
@@ -522,7 +522,7 @@ def dequantize_mxfp8_device(
     """
     from kernels.common.gfx120x_pad import ensure_contiguous
 
-    require_gfx120x(q.device, what="dequantize_mxfp8 (gfx120x)")
+    require_gfx120x(what="dequantize_mxfp8 (gfx120x)")
     if q.dtype != torch.float8_e4m3fn:
         raise ValueError(f"MXFP8 values must be float8_e4m3fn, got {q.dtype}")
     if scale.dtype != torch.uint8:

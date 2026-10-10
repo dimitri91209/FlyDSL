@@ -269,7 +269,7 @@ def device_pad(
 
     Pass ``stream`` so soft-pad runs on the same queue as a preceding/following kernel.
     """
-    require_gfx120x(x.device, what="device_pad (gfx120x)")
+    require_gfx120x(what="device_pad (gfx120x)")
     if mode == "zeros":
         mode = "constant"
     if mode not in _MODES:

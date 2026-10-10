@@ -87,7 +87,7 @@ Utilities
 - ``kernels.common.kernels_common`` -- Shared constants and helper functions
 - ``kernels.common.layout_utils`` -- Layout utility functions
 - ``kernels.common.mma.mfma_preshuffle_pipeline`` -- B layout builder and XCD block remapping used by preshuffle GEMM and MoE kernels
-- ``kernels.common.gfx120x_arch`` -- gfx120x arch check (``is_gfx120x``, ``require_gfx120x``)
+- ``kernels.common.gfx120x_arch`` -- ``require_gfx120x`` (process arch starts with ``gfx120``)
 - ``kernels.common.gfx120x_swiglu`` -- gfx120x SiLU and SwiGLU (``silu_mul``, ``swiglu_chunk``)
 
 .. seealso:: :doc:`../prebuilt_kernels_guide` for detailed usage and configuration of each kernel.

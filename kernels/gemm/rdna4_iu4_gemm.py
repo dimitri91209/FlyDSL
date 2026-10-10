@@ -558,7 +558,7 @@ def iu4_gemm(
 
     See ``docs/prebuilt_kernels_guide.md`` for call examples.
     """
-    require_gfx120x(a_packed.device, what="iu4_gemm (gfx120x)")
+    require_gfx120x(what="iu4_gemm (gfx120x)")
     import torch
 
     if a_packed.dim() != 2 or b_packed.dim() != 2:

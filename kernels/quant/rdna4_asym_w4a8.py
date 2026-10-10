@@ -666,7 +666,7 @@ def quantize_w4a8_int8_weight(
     """
     import torch
 
-    require_gfx120x(weight.device, what="quantize_w4a8_int8_weight (gfx120x)")
+    require_gfx120x(what="quantize_w4a8_int8_weight (gfx120x)")
     if scale_dtype is None:
         scale_dtype = torch.float8_e4m3fn
     if stochastic_rounding:
@@ -694,7 +694,7 @@ def dequant_int4_grouped_to_int8(
     stream: torch.cuda.Stream | None = None,
 ) -> torch.Tensor:
     """FlyDSL decode of packed W4A8 → INT8 GEMM grid."""
-    require_gfx120x(qdata.device, what="dequant_int4_grouped_to_int8 (gfx120x)")
+    require_gfx120x(what="dequant_int4_grouped_to_int8 (gfx120x)")
     import torch
 
     if qdata.dim() != 2 or qdata.dtype != torch.int8:
@@ -1154,7 +1154,7 @@ def dequantize_w4a8_int8_weight(
     ``group_size >= 4`` and (``16 % group_size == 0`` or
     ``group_size % 16 == 0``).
     """
-    require_gfx120x(qdata.device, what="dequantize_w4a8_int8_weight (gfx120x)")
+    require_gfx120x(what="dequantize_w4a8_int8_weight (gfx120x)")
 
     if output_dtype is None:
         output_dtype = torch.bfloat16
@@ -1262,7 +1262,7 @@ def w4a8_int8_linear(
     is not an int8 product: ``dequantize_w4a8_int8_weight`` reconstructs the
     original-basis weight in one kernel and ``gemm_bf16_nmajor_lds`` multiplies.
     """
-    require_gfx120x(x.device, what="w4a8_int8_linear (gfx120x)")
+    require_gfx120x(what="w4a8_int8_linear (gfx120x)")
     import torch
 
     from kernels.quant.rdna4_int8_convrot import int8_linear_convrot
